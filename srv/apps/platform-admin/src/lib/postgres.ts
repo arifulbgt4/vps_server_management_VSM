@@ -75,7 +75,7 @@ function publicConnection(database: string, role: string, password: string) {
   if (!host) return null;
 
   const port = Number(process.env.PG_PUBLIC_PORT || 5432);
-  const sslmode = process.env.PG_PUBLIC_SSLMODE || "require";
+  const sslmode = process.env.PG_PUBLIC_SSLMODE || "verify-full";
 
   return {
     host,
@@ -104,6 +104,15 @@ async function ensureControllerCanSetRole(client: any, role: string) {
     throw new Error(
       `Platform controller cannot SET ROLE ${role}. Grant ${role} to ${controller} with SET permission as postgres first.`,
     );
+  }
+}
+
+async function restrictDatabaseToOwner(client: any, database: string, role: string) {
+  await client.query(`SET ROLE ${ident(role)}`);
+  try {
+    await client.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${ident(database)} FROM PUBLIC`);
+  } finally {
+    await client.query("RESET ROLE").catch(() => undefined);
   }
 }
 
@@ -171,9 +180,11 @@ export async function createDatabaseWithRole(databaseInput: unknown, roleInput: 
     await setCredential("postgres", role, password);
     await ensureControllerCanSetRole(client, role);
     await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
+    await restrictDatabaseToOwner(client, database, role);
   } catch (error) {
     await deleteCredential("postgres", role).catch(() => undefined);
     if (roleCreated) {
+      await client.query(`DROP DATABASE IF EXISTS ${ident(database)} WITH (FORCE)`).catch(() => undefined);
       await client.query(`DROP ROLE IF EXISTS ${ident(role)}`).catch(() => undefined);
     }
     throw error;
@@ -216,6 +227,7 @@ export async function createDatabaseForExistingRole(
 
     await ensureControllerCanSetRole(client, role);
     await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
+    await restrictDatabaseToOwner(client, database, role);
   } finally {
     client.release();
   }
