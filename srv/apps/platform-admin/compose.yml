@@ -36,6 +36,8 @@ services:
       REDIS_PUBLIC_PORT: ${REDIS_PUBLIC_PORT:-6380}
       DOCKER_AGENT_URL: http://docker-agent:8080
       DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
+      MEDIA_SERVICE_URL: http://media-service:8080
+      MEDIA_ADMIN_TOKEN_FILE: /run/secrets/media_admin_token
     ports:
       - "127.0.0.1:${PLATFORM_ADMIN_PORT:-3000}:3000"
     volumes:
@@ -60,6 +62,12 @@ services:
       - type: bind
         source: ./secrets/docker_agent_token
         target: /run/secrets/docker_agent_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/media_admin_token
+        target: /run/secrets/media_admin_token
         read_only: true
         bind:
           create_host_path: false
@@ -98,6 +106,7 @@ services:
       - postgres_net
       - redis_net
       - management_net
+      - media_net
 
 networks:
   proxy_net:
@@ -107,4 +116,6 @@ networks:
   redis_net:
     external: true
   management_net:
+    external: true
+  media_net:
     external: true
