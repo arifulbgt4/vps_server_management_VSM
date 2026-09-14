@@ -15,11 +15,14 @@ type Resources = {
   users: RedisUser[];
   app_host: string;
   app_port: number;
+  public_host?: string | null;
+  public_port?: number;
 };
 
 type RevealedConnection = {
   password: string;
   url: string;
+  public_url?: string | null;
 };
 
 export default function RedisManager() {
@@ -67,7 +70,11 @@ export default function RedisManager() {
     try {
       const data = await request(payload);
       if (data.password && data.connection?.url) {
-        setCredential({ password: data.password, url: data.connection.url });
+        setCredential({
+          password: data.password,
+          url: data.connection.url,
+          public_url: data.connection.public_url,
+        });
         setCredentialUser(data.username);
         setShowCredential(false);
         setMessage(
@@ -134,6 +141,7 @@ export default function RedisManager() {
         [user.name]: {
           password: data.password,
           url: data.connection.url,
+          public_url: data.connection.public_url,
         },
       }));
     } catch (error) {
@@ -150,7 +158,7 @@ export default function RedisManager() {
           <div>
             <a href="/" className={styles.back}>← Platform Admin</a>
             <h1>Redis</h1>
-            <p>ACL user and application connection management over the private redis_net network.</p>
+            <p>ACL users plus private Docker and public TLS connection management.</p>
           </div>
           <span className={styles.status}>{message}</span>
         </div>
@@ -163,7 +171,7 @@ export default function RedisManager() {
                 <p>Hidden by default and stored encrypted for later reveal.</p>
               </div>
               <button type="button" onClick={() => setShowCredential((value) => !value)}>
-                {showCredential ? "Hide" : "Show URL & password"}
+                {showCredential ? "Hide" : "Show URLs & password"}
               </button>
             </div>
             {showCredential && (
@@ -178,6 +186,13 @@ export default function RedisManager() {
                   <code>{credential.url}</code>
                   <button type="button" onClick={() => navigator.clipboard.writeText(credential.url)}>Copy URL</button>
                 </div>
+                {credential.public_url && (
+                  <div className={styles.secretRow}>
+                    <span>Public TLS Redis URL</span>
+                    <code>{credential.public_url}</code>
+                    <button type="button" onClick={() => navigator.clipboard.writeText(credential.public_url || "")}>Copy URL</button>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -210,7 +225,10 @@ export default function RedisManager() {
           <div className={styles.tableHeader}>
             <div>
               <h2>ACL users</h2>
-              <p>Application URL uses <code>redis:{resources.app_port}</code> and requires the app container to join <code>redis_net</code>.</p>
+              <p>
+                Private apps use <code>redis:{resources.app_port}</code> on <code>redis_net</code>
+                {resources.public_host ? <>; public TLS uses <code>{resources.public_host}:{resources.public_port}</code>.</> : "."}
+              </p>
             </div>
             <span className={styles.online}>{resources.status}</span>
           </div>
@@ -231,12 +249,19 @@ export default function RedisManager() {
                         ) : user.credential_available ? (
                           <>
                             <button type="button" className={styles.smallButton} disabled={busy} onClick={() => toggleConnection(user)}>
-                              {connection ? "Hide URL" : "Show URL"}
+                              {connection ? "Hide URLs" : "Show URLs"}
                             </button>
                             {connection && (
                               <div className={styles.inlineSecret}>
+                                {connection.public_url && <code>{connection.public_url}</code>}
                                 <code>{connection.url}</code>
-                                <button type="button" className={styles.smallButton} onClick={() => navigator.clipboard.writeText(connection.url)}>Copy</button>
+                                <button
+                                  type="button"
+                                  className={styles.smallButton}
+                                  onClick={() => navigator.clipboard.writeText(connection.public_url || connection.url)}
+                                >
+                                  Copy {connection.public_url ? "public" : "private"}
+                                </button>
                               </div>
                             )}
                           </>
