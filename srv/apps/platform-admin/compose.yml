@@ -20,7 +20,7 @@ services:
       PG_PASSWORD_FILE: /run/secrets/platform_controller_password
       PG_PUBLIC_HOST: ${PG_PUBLIC_HOST:-db.openmusk.store}
       PG_PUBLIC_PORT: ${PG_PUBLIC_PORT:-5432}
-      PG_PUBLIC_SSLMODE: ${PG_PUBLIC_SSLMODE:-require}
+      PG_PUBLIC_SSLMODE: ${PG_PUBLIC_SSLMODE:-verify-full}
       PLATFORM_DB_NAME: platform_admin
       PLATFORM_DB_USER: platform_app
       PLATFORM_DB_PASSWORD_FILE: /run/secrets/platform_app_password
@@ -32,6 +32,8 @@ services:
       REDIS_APP_HOST: redis
       REDIS_APP_PORT: 6379
       REDIS_APP_DATABASE: 0
+      DOCKER_AGENT_URL: http://docker-agent:8080
+      DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
     ports:
       - "127.0.0.1:${PLATFORM_ADMIN_PORT:-3000}:3000"
     volumes:
@@ -50,6 +52,12 @@ services:
       - type: bind
         source: /srv/infrastructure/cache/redis/secrets/platform_controller_password
         target: /run/secrets/redis_controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/infrastructure/management/docker-agent/secrets/control_token
+        target: /run/secrets/docker_agent_token
         read_only: true
         bind:
           create_host_path: false
@@ -87,6 +95,7 @@ services:
       - proxy_net
       - postgres_net
       - redis_net
+      - management_net
 
 networks:
   proxy_net:
@@ -94,4 +103,6 @@ networks:
   postgres_net:
     external: true
   redis_net:
+    external: true
+  management_net:
     external: true
