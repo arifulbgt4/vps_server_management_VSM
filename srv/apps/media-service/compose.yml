@@ -1,0 +1,73 @@
+services:
+  media-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: platform-media
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      MEDIA_STORAGE_ROOT: /storage
+
+      MEDIA_DB_HOST: postgres
+      MEDIA_DB_PORT: "5432"
+      MEDIA_DB_NAME: ${MEDIA_DB_NAME:-media_service}
+      MEDIA_DB_USER: ${MEDIA_DB_USER:-media_app}
+      MEDIA_DB_PASSWORD_FILE: /run/secrets/db_password
+      MEDIA_DB_POOL_MAX: ${MEDIA_DB_POOL_MAX:-10}
+
+      MEDIA_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?set MEDIA_PUBLIC_BASE_URL in .env}
+      MEDIA_PUBLIC_FILES_ENABLED: ${MEDIA_PUBLIC_FILES_ENABLED:-true}
+      MEDIA_MAX_UPLOAD_BYTES: ${MEDIA_MAX_UPLOAD_BYTES:-536870912}
+      MEDIA_MIN_FREE_BYTES: ${MEDIA_MIN_FREE_BYTES:-5368709120}
+      MEDIA_ALLOW_OTHER_FILES: ${MEDIA_ALLOW_OTHER_FILES:-false}
+
+    ports:
+      - "127.0.0.1:${MEDIA_BIND_PORT:-8082}:8080"
+
+    volumes:
+      - type: bind
+        source: ./storage
+        target: /storage
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/db_password
+        target: /run/secrets/db_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/admin_token
+        target: /run/secrets/admin_token
+        read_only: true
+        bind:
+          create_host_path: false
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      postgres_net:
+      media_net:
+        aliases:
+          - media-service
+
+networks:
+  postgres_net:
+    external: true
+  media_net:
+    external: true
