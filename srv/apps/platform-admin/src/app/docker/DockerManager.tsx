@@ -201,18 +201,21 @@ export default function DockerManager() {
 
   async function clearLimits(service: DockerService) {
     if (!window.confirm(`Remove CPU and RAM limits from ${service.name}?`)) return;
-    setLimitDrafts((current) => ({
-      ...current,
-      [service.name]: { cpu: "", memory: "" },
-    }));
     setBusy(service.name);
     try {
-      await post({
+      const data = await post({
         name: service.name,
         action: "set-limits",
         cpu_percent: null,
         memory_percent: null,
       });
+      setLimitDrafts((current) => ({
+        ...current,
+        [service.name]: {
+          cpu: data.cpu_percent === null ? "" : String(data.cpu_percent),
+          memory: data.memory_percent === null ? "" : String(data.memory_percent),
+        },
+      }));
       setMessage(`${service.name}: resource limits removed`);
       await refresh();
     } catch (error) {
@@ -222,13 +225,7 @@ export default function DockerManager() {
     }
   }
 
-  async function loadLogs(service: DockerService) {
-    if (openLogs === service.name) {
-      setOpenLogs(null);
-      return;
-    }
-
-    setOpenLogs(service.name);
+  async function fetchLogs(service: DockerService) {
     setLoadingLogs(service.name);
     try {
       const data = await post({ name: service.name, action: "logs", tail: 150 });
@@ -240,6 +237,15 @@ export default function DockerManager() {
     } finally {
       setLoadingLogs(null);
     }
+  }
+
+  async function toggleLogs(service: DockerService) {
+    if (openLogs === service.name) {
+      setOpenLogs(null);
+      return;
+    }
+    setOpenLogs(service.name);
+    await fetchLogs(service);
   }
 
   return (
@@ -345,14 +351,11 @@ export default function DockerManager() {
                 </div>
 
                 <div className={styles.logsHeader}>
-                  <button type="button" className={styles.logsButton} disabled={loadingLogs === service.name} onClick={() => loadLogs(service)}>
+                  <button type="button" className={styles.logsButton} disabled={loadingLogs === service.name} onClick={() => toggleLogs(service)}>
                     {openLogs === service.name ? "Hide recent logs" : "View recent logs"}
                   </button>
                   {openLogs === service.name && (
-                    <button type="button" className={styles.secondaryButton} disabled={loadingLogs === service.name} onClick={() => {
-                      setOpenLogs(null);
-                      window.setTimeout(() => loadLogs(service), 0);
-                    }}>Refresh logs</button>
+                    <button type="button" className={styles.secondaryButton} disabled={loadingLogs === service.name} onClick={() => fetchLogs(service)}>Refresh logs</button>
                   )}
                 </div>
                 {openLogs === service.name && (
