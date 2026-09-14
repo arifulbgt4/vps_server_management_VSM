@@ -1,69 +1,73 @@
-import Image from "next/image";
 import styles from "./page.module.css";
+
+const modules = [
+  {
+    name: "PostgreSQL",
+    description: "Database, role, password and permission management.",
+    status: "Next",
+  },
+  {
+    name: "MySQL",
+    description: "Independent database service management.",
+    status: "Planned",
+  },
+  {
+    name: "Redis",
+    description: "Cache, ACL and connection management.",
+    status: "Planned",
+  },
+  {
+    name: "Docker Services",
+    description: "Service status and lifecycle overview.",
+    status: "Planned",
+  },
+];
 
 export default function Home() {
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>
-            To get started, edit the{" "}
-            <code className={styles.code}>page.tsx</code> file.
-          </h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main className={styles.page}>
+      <section className={styles.shell}>
+        <header className={styles.header}>
+          <div>
+            <p className={styles.eyebrow}>VPS Server Management</p>
+            <h1>Platform Admin</h1>
+            <p className={styles.subtitle}>
+              Minimal control panel for independently managed VPS services.
+            </p>
+          </div>
+
+          <div className={styles.status}>
+            <span className={styles.statusDot} />
+            Application running
+          </div>
+        </header>
+
+        <section className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <div>
+              <h2>Infrastructure modules</h2>
+              <p>Features will be added only when the underlying service is ready.</p>
+            </div>
+          </div>
+
+          <div className={styles.grid}>
+            {modules.map((module) => (
+              <article className={styles.card} key={module.name}>
+                <div className={styles.cardTop}>
+                  <h3>{module.name}</h3>
+                  <span className={styles.badge}>{module.status}</span>
+                </div>
+                <p>{module.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <footer className={styles.footer}>
+          <span>Platform Admin v0.1.0</span>
+          <code>GET /api/health</code>
+        </footer>
+      </section>
+    </main>
   );
 }
