@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./postgres.module.css";
 
 type DatabaseRow = {
@@ -22,16 +22,47 @@ type Resources = {
   roles: RoleRow[];
 };
 
+type Connection = {
+  host: string;
+  port: number;
+  sslmode: string;
+  database: string;
+  role: string;
+  url?: string;
+};
+
+type Credential = {
+  role: string;
+  database?: string;
+  password: string;
+  connection?: Connection | null;
+};
+
+const RESERVED_ROLES = new Set(["postgres", "platform_controller", "platform_app"]);
+
 export default function PostgresManager() {
   const [resources, setResources] = useState<Resources>({ databases: [], roles: [] });
   const [database, setDatabase] = useState("");
   const [role, setRole] = useState("");
+  const [existingDatabase, setExistingDatabase] = useState("");
+  const [existingRole, setExistingRole] = useState("");
   const [rotateRole, setRotateRole] = useState("");
+  const [rotateDatabase, setRotateDatabase] = useState("");
   const [deleteDatabase, setDeleteDatabase] = useState("");
   const [deleteRole, setDeleteRole] = useState("");
-  const [secret, setSecret] = useState<string | null>(null);
+  const [deleteRoleToo, setDeleteRoleToo] = useState(false);
+  const [credential, setCredential] = useState<Credential | null>(null);
+  const [showCredential, setShowCredential] = useState(false);
   const [message, setMessage] = useState("Loading PostgreSQL...");
   const [busy, setBusy] = useState(false);
+
+  const assignableRoles = useMemo(
+    () =>
+      resources.roles.filter(
+        (item) => item.can_login && !item.superuser && !RESERVED_ROLES.has(item.name),
+      ),
+    [resources.roles],
+  );
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/postgres", { cache: "no-store" });
@@ -47,7 +78,6 @@ export default function PostgresManager() {
 
   async function action(payload: Record<string, string>) {
     setBusy(true);
-    setSecret(null);
     try {
       const response = await fetch("/api/postgres", {
         method: "POST",
@@ -58,11 +88,28 @@ export default function PostgresManager() {
       if (!response.ok) throw new Error(data.error || "Operation failed");
 
       if (data.password) {
-        setSecret(data.password);
-        setMessage(`Password generated for ${data.role}. Copy it now; it is not stored by this UI.`);
+        setCredential({
+          role: data.role,
+          database: data.database,
+          password: data.password,
+          connection: data.connection,
+        });
+        setShowCredential(false);
+        setMessage(
+          `Credential generated for ${data.role}. It is held only in this browser session; copy it before leaving the page.`,
+        );
+      } else if (payload.action === "create-existing-role") {
+        setCredential(null);
+        setShowCredential(false);
+        setMessage(
+          `Database ${data.database} created for existing user ${data.role}. Its existing password was not changed or read.`,
+        );
       } else {
+        setCredential(null);
+        setShowCredential(false);
         setMessage("Operation completed");
       }
+
       await refresh();
       return data;
     } catch (error) {
@@ -82,18 +129,44 @@ export default function PostgresManager() {
     } catch {}
   }
 
+  async function createForExistingRole(event: FormEvent) {
+    event.preventDefault();
+    try {
+      await action({
+        action: "create-existing-role",
+        database: existingDatabase,
+        role: existingRole,
+      });
+      setExistingDatabase("");
+    } catch {}
+  }
+
   async function rotate(event: FormEvent) {
     event.preventDefault();
     try {
-      await action({ action: "rotate-password", role: rotateRole });
+      await action({
+        action: "rotate-password",
+        role: rotateRole,
+        database: rotateDatabase,
+      });
     } catch {}
   }
 
   async function remove(event: FormEvent) {
     event.preventDefault();
-    if (!window.confirm(`Delete database ${deleteDatabase} and role ${deleteRole}?`)) return;
+
+    const target = deleteRoleToo
+      ? `database ${deleteDatabase} and role ${deleteRole}`
+      : `database ${deleteDatabase}`;
+
+    if (!window.confirm(`Delete ${target}?`)) return;
+
     try {
-      await action({ action: "delete", database: deleteDatabase, role: deleteRole });
+      if (deleteRoleToo) {
+        await action({ action: "delete", database: deleteDatabase, role: deleteRole });
+      } else {
+        await action({ action: "delete-database", database: deleteDatabase });
+      }
       setDeleteDatabase("");
       setDeleteRole("");
     } catch {}
@@ -106,37 +179,116 @@ export default function PostgresManager() {
           <div>
             <a href="/" className={styles.back}>← Platform Admin</a>
             <h1>PostgreSQL</h1>
-            <p>Minimal database and role management over the private postgres_net network.</p>
+            <p>Database, user, credential and remote connection management.</p>
           </div>
           <span className={styles.status}>{message}</span>
         </div>
 
-        {secret && (
+        {credential && (
           <section className={styles.secret}>
-            <strong>Generated password</strong>
-            <code>{secret}</code>
-            <button onClick={() => navigator.clipboard.writeText(secret)}>Copy</button>
+            <div className={styles.secretHeader}>
+              <div>
+                <strong>One-time database credential</strong>
+                <p>Hidden by default. The password is not stored by Platform Admin.</p>
+              </div>
+              <button type="button" onClick={() => setShowCredential((value) => !value)}>
+                {showCredential ? "Hide" : "Show URL & password"}
+              </button>
+            </div>
+
+            {showCredential && (
+              <div className={styles.secretBody}>
+                <div className={styles.secretRow}>
+                  <span>Password</span>
+                  <code>{credential.password}</code>
+                  <button type="button" onClick={() => navigator.clipboard.writeText(credential.password)}>
+                    Copy password
+                  </button>
+                </div>
+
+                {credential.connection?.url ? (
+                  <div className={styles.secretRow}>
+                    <span>Remote PostgreSQL URL</span>
+                    <code>{credential.connection.url}</code>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(credential.connection?.url || "")}
+                    >
+                      Copy URL
+                    </button>
+                  </div>
+                ) : (
+                  <p className={styles.warning}>Remote PostgreSQL host is not configured.</p>
+                )}
+              </div>
+            )}
           </section>
         )}
 
         <section className={styles.actions}>
           <form className={styles.card} onSubmit={createPair}>
-            <h2>Create database + user</h2>
+            <h2>Create DB + new user</h2>
+            <p>Creates a dedicated login role, generates a password, and makes it the database owner.</p>
             <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="database_name" required />
             <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="app_user" required />
             <button disabled={busy}>Create & generate password</button>
           </form>
 
+          <form className={styles.card} onSubmit={createForExistingRole}>
+            <h2>Create DB using existing user</h2>
+            <p>The existing password is preserved. Platform Admin cannot read an existing PostgreSQL password.</p>
+            <input
+              value={existingDatabase}
+              onChange={(e) => setExistingDatabase(e.target.value)}
+              placeholder="database_name"
+              required
+            />
+            <select
+              value={existingRole}
+              onChange={(e) => setExistingRole(e.target.value)}
+              required
+            >
+              <option value="">Select existing user</option>
+              {assignableRoles.map((item) => (
+                <option key={item.name} value={item.name}>{item.name}</option>
+              ))}
+            </select>
+            <button disabled={busy || assignableRoles.length === 0}>Create database</button>
+          </form>
+
           <form className={styles.card} onSubmit={rotate}>
             <h2>Rotate user password</h2>
+            <p>Generates a new password and a fresh remote URL for a database owned by that user.</p>
+            <input value={rotateDatabase} onChange={(e) => setRotateDatabase(e.target.value)} placeholder="database_name" required />
             <input value={rotateRole} onChange={(e) => setRotateRole(e.target.value)} placeholder="app_user" required />
             <button disabled={busy}>Generate new password</button>
           </form>
 
           <form className={styles.card} onSubmit={remove}>
-            <h2>Delete database + user</h2>
-            <input value={deleteDatabase} onChange={(e) => setDeleteDatabase(e.target.value)} placeholder="database_name" required />
-            <input value={deleteRole} onChange={(e) => setDeleteRole(e.target.value)} placeholder="app_user" required />
+            <h2>Delete database</h2>
+            <p>By default only the database is deleted, so shared existing users remain safe.</p>
+            <input
+              value={deleteDatabase}
+              onChange={(e) => setDeleteDatabase(e.target.value)}
+              placeholder="database_name"
+              required
+            />
+            <label className={styles.checkbox}>
+              <input
+                type="checkbox"
+                checked={deleteRoleToo}
+                onChange={(e) => setDeleteRoleToo(e.target.checked)}
+              />
+              Also delete its PostgreSQL user
+            </label>
+            {deleteRoleToo && (
+              <input
+                value={deleteRole}
+                onChange={(e) => setDeleteRole(e.target.value)}
+                placeholder="app_user"
+                required
+              />
+            )}
             <button className={styles.danger} disabled={busy}>Delete permanently</button>
           </form>
         </section>
