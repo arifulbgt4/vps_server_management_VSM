@@ -2,7 +2,7 @@
 
 Production-oriented VPS infrastructure and management repository for independently deployed services.
 
-Current production components:
+Current deployed production components:
 
 ```text
 Platform Admin         Next.js management UI
@@ -16,12 +16,21 @@ Nginx + Certbot        HTTPS and certificate lifecycle
 DOCKER-USER firewall   explicit Docker published-port policy
 ```
 
+Tracked integrations ready for VPS deployment:
+
+```text
+MySQL                  private mysql_net service + Platform Admin /mysql
+MongoDB                private mongo_net single-node rs0 + Platform Admin /mongodb
+```
+
 Primary runtime layout:
 
 ```text
 /srv/
 ├── infrastructure/
 │   ├── databases/postgres/
+│   ├── databases/mysql/
+│   ├── databases/mongodb/
 │   ├── cache/redis/
 │   ├── management/docker-agent/
 │   └── networking/
@@ -33,15 +42,19 @@ Primary runtime layout:
 
 ## Documentation
 
-Complete production architecture, security rules, deployment procedures, verification, queue mode, Media Storage, scaling and troubleshooting:
+Complete production architecture, security rules, deployment procedures, verification, queue mode, database services, Media Storage, scaling and troubleshooting:
 
 **[docs/PRODUCTION_SETUP.md](docs/PRODUCTION_SETUP.md)**
 
-MongoDB production implementation roadmap (planned, not deployed yet):
+MongoDB design history and acceptance plan:
 
 **[docs/MONGODB_IMPLEMENTATION_PLAN.md](docs/MONGODB_IMPLEMENTATION_PLAN.md)**
 
-Application-specific documentation:
+Service documentation:
+
+**[srv/infrastructure/databases/mysql/README.md](srv/infrastructure/databases/mysql/README.md)**
+
+**[srv/infrastructure/databases/mongodb/README.md](srv/infrastructure/databases/mongodb/README.md)**
 
 **[srv/apps/platform-admin/README.md](srv/apps/platform-admin/README.md)**
 
@@ -59,36 +72,73 @@ Runtime path:
 /srv/apps/platform-admin
 ```
 
-Current version:
+Current tracked version:
 
 ```text
-0.9.0
-```
-
-Example production URL:
-
-```text
-https://admin.example.com
+1.0.0
 ```
 
 Management modules:
 
 ```text
 /postgres
+/mysql
+/mongodb
 /redis
 /docker
 /media
 ```
 
-The credential vault uses AES-256-GCM. Media user API keys can be shown/hidden from the authenticated Media manager because Platform Admin stores an encrypted copy while the Media Service itself stores only the API-key hash.
+PostgreSQL, MySQL, MongoDB, Redis and Media credentials that must be recoverable are stored encrypted with the existing AES-256-GCM credential vault. Database root/bootstrap secrets are never exposed to the browser and are not mounted into Platform Admin.
 
-## n8n queue mode
+## MySQL integration
 
-Tracked production stack:
+Tracked infrastructure:
 
 ```text
-srv/apps/n8n/
+srv/infrastructure/databases/mysql/
 ```
+
+Design:
+
+```text
+platform-mysql
+  -> private mysql_net
+  -> mysql:3306 Docker alias
+  -> persistent /var/lib/mysql
+  -> root credential for bootstrap/emergency only
+  -> platform_controller for Platform Admin management
+  -> dedicated database-scoped application users
+```
+
+No host port is published. Platform Admin `/mysql`, n8n main and n8n-worker use `mysql_net`.
+
+## MongoDB integration
+
+Tracked infrastructure:
+
+```text
+srv/infrastructure/databases/mongodb/
+```
+
+Design:
+
+```text
+platform-mongodb
+  -> private mongo_net
+  -> mongodb:27017 Docker alias
+  -> authorization enabled
+  -> single-node replica set rs0
+  -> persistent /data/db
+  -> replica-set keyfile authentication
+  -> root credential for bootstrap/emergency only
+  -> platform_controller for Platform Admin management
+  -> readWrite application users scoped to their database
+```
+
+No host port is published. Platform Admin `/mongodb`, n8n main and n8n-worker use `mongo_net`.
+
+## n8n queue mode
 
 n8n runs permanently in Redis queue mode:
 
@@ -99,67 +149,21 @@ n8n-worker  -> workflow execution, initial concurrency 5
 PostgreSQL  -> persistent n8n data
 ```
 
-The main process binds only to `127.0.0.1:5678`; the worker publishes no host port. Both main and worker use `postgres_net`, `redis_net` and `media_net` and share the same persistent n8n encryption key.
+Both main and worker are now tracked on:
 
-Queue Redis uses a dedicated ACL identity such as `n8n_queue` rather than `platform_controller`.
+```text
+postgres_net
+redis_net
+mysql_net
+mongo_net
+media_net
+```
+
+This allows workflow nodes to reach database services over private Docker networking without public database ports.
 
 ## Media Storage
 
-Tracked production service:
-
-```text
-srv/apps/media-service/
-```
-
-The service stores physical files under `/srv/apps/media-service/storage` and ownership/quota/file metadata in its dedicated PostgreSQL database.
-
-Capabilities include:
-
-```text
-per-user API keys
-per-user GiB quotas
-used/available usage tracking
-image/video/audio/PDF/document/archive support
-private binary endpoint for n8n
-optional public file URLs
-hard file deletion
-hard user + all-owned-files deletion
-host free-space reserve
-```
-
-Platform Admin reaches the private media admin API through `media_net`. n8n reaches media binaries directly through:
-
-```text
-http://media-service:8080
-```
-
-## Planned MongoDB service
-
-MongoDB is planned as an independent shared infrastructure service; it is **not deployed yet**.
-
-Target architecture:
-
-```text
-platform-mongodb
-  -> private mongo_net
-  -> authentication enabled
-  -> single-node replica set rs0
-  -> persistent /data/db
-
-Platform Admin /mongodb
-  -> dedicated controller identity
-  -> create/manage per-database application users
-  -> encrypted credential reveal through the existing vault
-
-n8n + n8n-worker
-  -> private mongodb:27017 connectivity on mongo_net
-```
-
-The first phase keeps port `27017` private. Public MongoDB access is explicitly deferred until a separate TLS/firewall/replica-set hostname review is completed.
-
-See the full implementation and acceptance plan:
-
-**[docs/MONGODB_IMPLEMENTATION_PLAN.md](docs/MONGODB_IMPLEMENTATION_PLAN.md)**
+The service stores physical files under `/srv/apps/media-service/storage` and ownership/quota/file metadata in its dedicated PostgreSQL database. Platform Admin reaches the private media admin API through `media_net`; n8n reaches media binaries directly through `http://media-service:8080`.
 
 ## Load balancing
 
@@ -167,6 +171,10 @@ A separate load balancer is not required for the current single-VPS deployment. 
 
 Add HTTP load balancing only after deploying multiple HTTP-facing instances, and add an external/cloud load balancer when moving to multiple VPS nodes or high availability.
 
+## Deployment status rule
+
+Repository code being present does not mean a service is already running on the VPS. MySQL and MongoDB must be copied to `/srv`, their runtime secrets/directories/networks must be created, their containers must pass health checks, and Platform Admin must be rebuilt before they are considered deployed.
+
 ## Secrets
 
-Do not commit any file from a `secrets/` directory, private key, password, bearer token, Redis credential, credential-vault master key, n8n encryption key, media admin token, MongoDB keyfile/credential, or generated application credential.
+Do not commit any file from a `secrets/` directory, private key, password, bearer token, Redis credential, credential-vault master key, n8n encryption key, media admin token, MySQL root/controller credential, MongoDB root/controller/keyfile, or generated application credential.
