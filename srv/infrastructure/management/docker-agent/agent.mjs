@@ -189,7 +189,7 @@ function decodeDockerLogs(buffer, tty) {
     const size = buffer.readUInt32BE(offset + 4);
     const start = offset + 8;
     const end = start + size;
-    if (size < 0 || end > buffer.length) break;
+    if (end > buffer.length) break;
     parts.push(buffer.subarray(start, end).toString("utf8"));
     validFrames += 1;
     offset = end;
@@ -223,11 +223,17 @@ function currentLimits(inspect, info) {
   const hostCpus = Math.max(1, Number(info.NCPU || 1));
   const hostMemory = Number(info.MemTotal || 0);
   const nanoCpus = Number(inspect.HostConfig?.NanoCpus || 0);
+  const cpuPeriod = Number(inspect.HostConfig?.CpuPeriod || 100000);
+  const cpuQuota = Number(inspect.HostConfig?.CpuQuota || 0);
   const memory = Number(inspect.HostConfig?.Memory || 0);
 
+  let cpuCores = null;
+  if (nanoCpus > 0) cpuCores = nanoCpus / 1e9;
+  else if (cpuQuota > 0 && cpuPeriod > 0) cpuCores = cpuQuota / cpuPeriod;
+
   return {
-    cpu_percent: nanoCpus > 0 ? (nanoCpus / (hostCpus * 1e9)) * 100 : null,
-    cpu_cores: nanoCpus > 0 ? nanoCpus / 1e9 : null,
+    cpu_percent: cpuCores !== null ? (cpuCores / hostCpus) * 100 : null,
+    cpu_cores: cpuCores,
     memory_percent: memory > 0 && hostMemory > 0 ? (memory / hostMemory) * 100 : null,
     memory_bytes: memory > 0 ? memory : null,
   };
@@ -317,40 +323,110 @@ function parseLimitPercent(value, label, min, max) {
   return Math.round(number * 100) / 100;
 }
 
+function resourceUpdateValues(cpuPercent, memoryPercent, info) {
+  const hostCpus = Math.max(1, Number(info.NCPU || 1));
+  const hostMemory = Number(info.MemTotal || 0);
+  if (hostMemory <= 0) throw new Error("Docker host memory information is unavailable");
+
+  const cpuPeriod = 100000;
+  const cpuQuota = cpuPercent === null
+    ? -1
+    : Math.max(1000, Math.round(hostCpus * cpuPeriod * (cpuPercent / 100)));
+  const memoryBytes = memoryPercent === null
+    ? 0
+    : Math.max(32 * 1024 * 1024, Math.floor(hostMemory * (memoryPercent / 100)));
+
+  return { hostCpus, hostMemory, cpuPeriod, cpuQuota, memoryBytes };
+}
+
+async function ensureMemoryLimitIsSafe(name, memoryBytes) {
+  if (memoryBytes <= 0) return;
+  const inspect = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/json`);
+  if (!inspect.State?.Running) return;
+
+  const stats = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/stats?stream=false&one-shot=true`);
+  const active = activeMemoryUsage(stats);
+  const raw = Number(stats?.memory_stats?.usage || 0);
+  const usage = Math.max(active, raw);
+
+  if (usage > memoryBytes) {
+    const usageMb = (usage / 1024 / 1024).toFixed(1);
+    const limitMb = (memoryBytes / 1024 / 1024).toFixed(1);
+    throw new Error(`RAM limit ${limitMb} MiB is below current cgroup usage ${usageMb} MiB`);
+  }
+}
+
+async function applyResourceUpdate(name, cpuPercent, memoryPercent, info) {
+  const values = resourceUpdateValues(cpuPercent, memoryPercent, info);
+  await ensureMemoryLimitIsSafe(name, values.memoryBytes);
+
+  const inspectBefore = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/json`);
+  const currentSwap = Number(inspectBefore.HostConfig?.MemorySwap || 0);
+  const body = {
+    NanoCpus: 0,
+    CpuPeriod: values.cpuPeriod,
+    CpuQuota: values.cpuQuota,
+    Memory: values.memoryBytes,
+  };
+
+  if (values.memoryBytes === 0) {
+    body.MemorySwap = 0;
+  } else if (currentSwap > 0 && currentSwap < values.memoryBytes) {
+    body.MemorySwap = Math.max(values.memoryBytes, values.memoryBytes * 2);
+  }
+
+  let updateResult;
+  try {
+    updateResult = await dockerRequest("POST", `/containers/${encodeURIComponent(name)}/update`, { body });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (values.memoryBytes > 0 && /memory.*swap|swap.*memory/i.test(message)) {
+      updateResult = await dockerRequest("POST", `/containers/${encodeURIComponent(name)}/update`, {
+        body: {
+          ...body,
+          MemorySwap: Math.max(values.memoryBytes, values.memoryBytes * 2),
+        },
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  const inspectAfter = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/json`);
+  const actual = currentLimits(inspectAfter, info);
+  const expectedCpu = cpuPercent;
+  const expectedMemory = memoryPercent;
+
+  if (expectedCpu === null) {
+    if (actual.cpu_percent !== null) {
+      throw new Error(`Docker reported CPU limit ${actual.cpu_percent.toFixed(2)}% after requesting unlimited`);
+    }
+  } else if (actual.cpu_percent === null || Math.abs(actual.cpu_percent - expectedCpu) > 0.15) {
+    throw new Error(`CPU limit verification failed: requested ${expectedCpu}%, Docker reports ${actual.cpu_percent ?? "unlimited"}`);
+  }
+
+  if (expectedMemory === null) {
+    if (actual.memory_percent !== null) {
+      throw new Error(`Docker reported RAM limit ${actual.memory_percent.toFixed(2)}% after requesting unlimited`);
+    }
+  } else if (actual.memory_percent === null || Math.abs(actual.memory_percent - expectedMemory) > 0.15) {
+    throw new Error(`RAM limit verification failed: requested ${expectedMemory}%, Docker reports ${actual.memory_percent ?? "unlimited"}`);
+  }
+
+  return {
+    values,
+    actual,
+    warnings: Array.isArray(updateResult?.Warnings) ? updateResult.Warnings.filter(Boolean) : [],
+  };
+}
+
 async function updateResourceLimits(name, input) {
   assertAllowlisted(name);
   const cpuPercent = parseLimitPercent(input.cpu_percent, "CPU limit", 1, 100);
   const memoryPercent = parseLimitPercent(input.memory_percent, "RAM limit", 0.5, 95);
   const info = await dockerRequest("GET", "/info");
-  const inspect = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/json`);
-  const hostCpus = Math.max(1, Number(info.NCPU || 1));
-  const hostMemory = Number(info.MemTotal || 0);
 
-  if (hostMemory <= 0) throw new Error("Docker host memory information is unavailable");
-
-  const nanoCpus = cpuPercent === null
-    ? 0
-    : Math.max(10_000_000, Math.round(hostCpus * 1e9 * (cpuPercent / 100)));
-  const memoryBytes = memoryPercent === null
-    ? 0
-    : Math.max(32 * 1024 * 1024, Math.floor(hostMemory * (memoryPercent / 100)));
-
-  if (memoryBytes > 0 && inspect.State?.Running) {
-    const stats = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/stats?stream=false&one-shot=true`);
-    const usage = activeMemoryUsage(stats);
-    if (usage > memoryBytes) {
-      const usageMb = (usage / 1024 / 1024).toFixed(1);
-      const limitMb = (memoryBytes / 1024 / 1024).toFixed(1);
-      throw new Error(`RAM limit ${limitMb} MiB is below current usage ${usageMb} MiB`);
-    }
-  }
-
-  await dockerRequest("POST", `/containers/${encodeURIComponent(name)}/update`, {
-    body: {
-      NanoCpus: nanoCpus,
-      Memory: memoryBytes,
-    },
-  });
+  const applied = await applyResourceUpdate(name, cpuPercent, memoryPercent, info);
 
   if (cpuPercent === null && memoryPercent === null) {
     delete desiredLimits[name];
@@ -362,13 +438,18 @@ async function updateResourceLimits(name, input) {
   }
   saveDesiredLimits();
 
+  console.log(
+    `Resource limits updated for ${name}: CPU=${cpuPercent ?? "unlimited"}% RAM=${memoryPercent ?? "unlimited"}%`,
+  );
+
   return {
     name,
     ok: true,
-    cpu_percent: cpuPercent,
-    memory_percent: memoryPercent,
-    cpu_cores: nanoCpus > 0 ? nanoCpus / 1e9 : null,
-    memory_bytes: memoryBytes > 0 ? memoryBytes : null,
+    cpu_percent: applied.actual.cpu_percent,
+    memory_percent: applied.actual.memory_percent,
+    cpu_cores: applied.actual.cpu_cores,
+    memory_bytes: applied.actual.memory_bytes,
+    warnings: applied.warnings,
   };
 }
 
@@ -395,26 +476,22 @@ async function reconcileLimits() {
   if (!entries.length) return;
 
   const info = await dockerRequest("GET", "/info");
-  const hostCpus = Math.max(1, Number(info.NCPU || 1));
-  const hostMemory = Number(info.MemTotal || 0);
-  if (hostMemory <= 0) return;
 
   for (const [name, limit] of entries) {
     try {
       const inspect = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/json`);
-      const desiredNano = limit.cpu_percent === null
-        ? 0
-        : Math.max(10_000_000, Math.round(hostCpus * 1e9 * (Number(limit.cpu_percent) / 100)));
-      const desiredMemory = limit.memory_percent === null
-        ? 0
-        : Math.max(32 * 1024 * 1024, Math.floor(hostMemory * (Number(limit.memory_percent) / 100)));
-      const currentNano = Number(inspect.HostConfig?.NanoCpus || 0);
-      const currentMemory = Number(inspect.HostConfig?.Memory || 0);
+      const current = currentLimits(inspect, info);
+      const desiredCpu = limit.cpu_percent === null ? null : Number(limit.cpu_percent);
+      const desiredMemory = limit.memory_percent === null ? null : Number(limit.memory_percent);
+      const cpuMatches = desiredCpu === null
+        ? current.cpu_percent === null
+        : current.cpu_percent !== null && Math.abs(current.cpu_percent - desiredCpu) <= 0.15;
+      const memoryMatches = desiredMemory === null
+        ? current.memory_percent === null
+        : current.memory_percent !== null && Math.abs(current.memory_percent - desiredMemory) <= 0.15;
 
-      if (currentNano !== desiredNano || currentMemory !== desiredMemory) {
-        await dockerRequest("POST", `/containers/${encodeURIComponent(name)}/update`, {
-          body: { NanoCpus: desiredNano, Memory: desiredMemory },
-        });
+      if (!cpuMatches || !memoryMatches) {
+        await applyResourceUpdate(name, desiredCpu, desiredMemory, info);
         console.log(`Re-applied managed resource limits to ${name}`);
       }
     } catch (error) {
@@ -464,6 +541,7 @@ const server = http.createServer(async (req, res) => {
 
     json(res, 404, { error: "Not found" });
   } catch (error) {
+    console.error(`${req.method || "REQUEST"} ${req.url || "/"}:`, error instanceof Error ? error.message : error);
     json(res, 500, { error: error instanceof Error ? error.message : "Docker agent error" });
   }
 });
