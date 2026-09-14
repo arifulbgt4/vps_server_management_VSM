@@ -6,6 +6,8 @@ services:
     environment:
       TZ: ${TZ:-Asia/Dhaka}
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/root_password
+      MYSQL_ROOT_HOST: localhost
+      MYSQL_CONTROLLER_USER: ${MYSQL_CONTROLLER_USER:-platform_controller}
     command:
       - mysqld
       - --bind-address=0.0.0.0
@@ -25,11 +27,23 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./secrets/controller_password
+        target: /run/secrets/controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./scripts/init-controller.sh
+        target: /docker-entrypoint-initdb.d/20-platform-controller.sh
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "MYSQL_PWD=$$(cat /run/secrets/root_password) mysqladmin ping -h 127.0.0.1 -uroot --silent",
+          "MYSQL_PWD=$$(cat /run/secrets/root_password) mysqladmin --protocol=socket -uroot ping --silent",
         ]
       interval: 10s
       timeout: 5s
@@ -39,40 +53,6 @@ services:
       mysql_net:
         aliases:
           - mysql
-
-  mysql-init:
-    image: mysql:${MYSQL_VERSION:-8.4}
-    container_name: platform-mysql-init
-    restart: "no"
-    user: "0:0"
-    depends_on:
-      mysql:
-        condition: service_healthy
-    entrypoint: ["sh", "/usr/local/bin/vsm-mysql-init.sh"]
-    environment:
-      MYSQL_HOST: mysql
-      MYSQL_CONTROLLER_USER: ${MYSQL_CONTROLLER_USER:-platform_controller}
-    volumes:
-      - type: bind
-        source: ./scripts/init-controller.sh
-        target: /usr/local/bin/vsm-mysql-init.sh
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./secrets/root_password
-        target: /run/secrets/root_password
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./secrets/controller_password
-        target: /run/secrets/controller_password
-        read_only: true
-        bind:
-          create_host_path: false
-    networks:
-      mysql_net:
 
 networks:
   mysql_net:
