@@ -47,6 +47,10 @@ function ident(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+function literal(value: string) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 function generatedPassword() {
   return randomBytes(24).toString("base64url");
 }
@@ -96,33 +100,20 @@ export async function createDatabaseWithRole(databaseInput: unknown, roleInput: 
     if (existingRole.rowCount) throw new Error(`Role ${role} already exists`);
 
     await client.query(
-      `CREATE ROLE ${ident(role)} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`,
+      `CREATE ROLE ${ident(role)} LOGIN PASSWORD ${literal(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`,
     );
 
     try {
-      await client.query(`CREATE DATABASE ${ident(database)}`);
-      await client.query(`GRANT ALL PRIVILEGES ON DATABASE ${ident(database)} TO ${ident(role)}`);
+      // PostgreSQL 17 automatically grants the CREATEROLE creator ADMIN membership
+      // in a role it creates. That allows platform_controller to SET ROLE to the
+      // new role and create the database with the application role as owner.
+      await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
     } catch (error) {
       await client.query(`DROP ROLE IF EXISTS ${ident(role)}`);
       throw error;
     }
   } finally {
     client.release();
-  }
-
-  const databaseClient = new (require("pg").Client)({
-    host: process.env.PGHOST || "postgres",
-    port: Number(process.env.PGPORT || 5432),
-    database,
-    user: process.env.PGUSER || "platform_controller",
-    password: getPassword(),
-  });
-
-  await databaseClient.connect();
-  try {
-    await databaseClient.query(`GRANT USAGE, CREATE ON SCHEMA public TO ${ident(role)}`);
-  } finally {
-    await databaseClient.end();
   }
 
   return { database, role, password };
@@ -136,7 +127,7 @@ export async function rotateRolePassword(roleInput: unknown) {
   const exists = await db.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [role]);
   if (!exists.rowCount) throw new Error(`Role ${role} does not exist`);
 
-  await db.query(`ALTER ROLE ${ident(role)} PASSWORD '${password}'`);
+  await db.query(`ALTER ROLE ${ident(role)} PASSWORD ${literal(password)}`);
   return { role, password };
 }
 
