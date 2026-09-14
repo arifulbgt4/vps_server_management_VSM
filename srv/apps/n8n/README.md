@@ -1,27 +1,58 @@
 # n8n Production App
 
-Production n8n deployment for the VSM host. This stack is intentionally independent from the PostgreSQL infrastructure lifecycle and uses the shared PostgreSQL service over `postgres_net`.
+Production n8n deployment for the VSM host. The stack uses shared PostgreSQL for persistent n8n data, shared Redis as the Bull queue/message broker, one main n8n process for the editor/API/webhooks, and one worker process for workflow execution.
 
-The image is pinned to n8n `2.38.7`, the current stable release when this app scaffold was created. Review n8n release notes before upgrading the pinned version.
+The image is pinned to n8n `2.38.7`. Review n8n release notes before upgrading the pinned version.
 
-> Documentation uses `example.com` as a placeholder domain. Replace it with your real domain in VPS runtime configuration.
+> Documentation uses `example.com` as a placeholder domain. Replace it with the real production domain in VPS runtime configuration.
 
 ## Architecture
 
 ```text
 Internet
-  -> HTTPS / Nginx on the host
+  -> HTTPS / Nginx on host
   -> 127.0.0.1:5678
-  -> n8n container
-  -> postgres_net
-  -> shared platform-postgres
+  -> n8n main
+       ├── postgres_net -> postgres:5432
+       ├── redis_net    -> redis:6379 -> Bull queue
+       └── media_net    -> media-service:8080
+
+Redis queue
+  -> n8n-worker
+       ├── postgres_net -> postgres:5432
+       ├── redis_net    -> redis:6379
+       └── media_net    -> media-service:8080
 ```
 
-The n8n container does not publish port `5678` publicly. It is bound only to host loopback and must be reached through Nginx/HTTPS.
+Only the main n8n process publishes a host port, and it is bound to loopback. `n8n-worker` publishes no host port.
 
-This first production stack runs one n8n instance. Redis/queue workers are deliberately not enabled yet; add queue mode as a separate scaling step when execution volume requires it.
+Queue mode is always enabled in this stack. Production executions are processed by workers. Manual executions are also offloaded to workers with `OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true`.
 
-## Files
+## Queue configuration
+
+```text
+EXECUTIONS_MODE=queue
+QUEUE_BULL_REDIS_HOST=redis
+QUEUE_BULL_REDIS_PORT=6379
+QUEUE_BULL_REDIS_USERNAME=n8n_queue
+QUEUE_BULL_REDIS_DB=1
+QUEUE_BULL_PREFIX=n8n
+OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+```
+
+The Redis password is not stored in `.env`; it is read from `secrets/redis_password` by the custom entrypoint and exported only inside the container process.
+
+The initial worker concurrency is `5`. n8n recommends worker concurrency of at least 5. Increase it only after observing VPS CPU/RAM, PostgreSQL connections, Redis health, and workflow latency.
+
+Queue mode must not use local filesystem binary storage. This stack explicitly sets:
+
+```text
+N8N_DEFAULT_BINARY_DATA_MODE=database
+```
+
+For application-owned images, videos, PDFs and documents, prefer the dedicated Media Service rather than treating n8n execution storage as permanent file storage.
+
+## Runtime files
 
 ```text
 /srv/apps/n8n/
@@ -31,26 +62,45 @@ This first production stack runs one n8n instance. Redis/queue workers are delib
 ├── data/
 ├── secrets/
 │   ├── db_password
-│   └── encryption_key
+│   ├── encryption_key
+│   └── redis_password
 └── nginx.conf.example
 ```
 
 `.env`, `data/`, and `secrets/` are ignored by Git.
 
-## 1. Create the PostgreSQL database and role
+## 1. PostgreSQL
 
-Use Platform Admin `/postgres` to create:
+Use Platform Admin `/postgres` to create or reuse the dedicated n8n database/role. The runtime values must match `.env`.
+
+Example:
 
 ```text
 Database: n8n
 User:     n8n_app
 ```
 
-Use a dedicated role. Do not use `postgres`, `platform_controller`, or `platform_app` for n8n.
+Do not use `postgres`, `platform_controller`, or `platform_app` as the n8n runtime role.
 
-Save the generated n8n database password securely. The same password must be written to the n8n runtime secret file in step 4.
+## 2. Redis ACL user
 
-## 2. Copy the app to the VPS
+Use Platform Admin `/redis` to create a dedicated Redis user:
+
+```text
+n8n_queue
+```
+
+Do not use `platform_controller` for n8n queue traffic.
+
+The internal same-VPS Redis endpoint is:
+
+```text
+redis:6379
+```
+
+Queue DB index `1` is used to keep n8n queue keys logically separate from applications using Redis DB `0`.
+
+## 3. Copy/update the app
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -62,95 +112,91 @@ sudo chown -R ariful:ariful /srv/apps/n8n
 cp -a srv/apps/n8n/. /srv/apps/n8n/
 ```
 
-## 3. Create runtime directories and environment file
+Do not delete existing runtime secrets or regenerate the n8n encryption key.
+
+## 4. Runtime directories and environment
 
 ```bash
 cd /srv/apps/n8n
-
 mkdir -p data secrets
-cp .env.example .env
-chmod 600 .env
 chmod 755 entrypoint.sh
 ```
 
-Edit `.env`:
+If `.env` does not already exist, start from `.env.example` and set the production domain/database values.
 
-```bash
-nano .env
-```
-
-Example:
+Queue settings:
 
 ```env
-N8N_VERSION=2.38.7
-N8N_HOST=n8n.example.com
-N8N_BIND_PORT=5678
-N8N_DB_NAME=n8n
-N8N_DB_USER=n8n_app
-GENERIC_TIMEZONE=Asia/Dhaka
-TZ=Asia/Dhaka
-N8N_LOG_LEVEL=info
-N8N_EXECUTIONS_DATA_MAX_AGE=336
-N8N_EXECUTIONS_DATA_PRUNE_MAX_COUNT=10000
+N8N_REDIS_USER=n8n_queue
+N8N_REDIS_DB=1
+N8N_QUEUE_PREFIX=n8n
+N8N_WORKER_CONCURRENCY=5
 ```
 
-Do not put database passwords or the n8n encryption key in `.env`.
+## 5. Secrets
 
-## 4. Create secrets
-
-Write the PostgreSQL password created for `n8n_app` into:
+Existing database secret:
 
 ```text
 /srv/apps/n8n/secrets/db_password
 ```
 
-For example, without placing the password in shell history:
+Existing persistent encryption key:
+
+```text
+/srv/apps/n8n/secrets/encryption_key
+```
+
+Never regenerate `encryption_key` after n8n credentials exist.
+
+Write the password for Redis user `n8n_queue` without placing it in shell history:
 
 ```bash
-read -s N8N_DB_PASSWORD
+read -s N8N_REDIS_PASSWORD
 echo
-printf '%s' "$N8N_DB_PASSWORD" > /srv/apps/n8n/secrets/db_password
-unset N8N_DB_PASSWORD
+printf '%s' "$N8N_REDIS_PASSWORD" > /srv/apps/n8n/secrets/redis_password
+unset N8N_REDIS_PASSWORD
 ```
 
-Generate a persistent n8n encryption key once:
-
-```bash
-openssl rand -hex 32 > /srv/apps/n8n/secrets/encryption_key
-```
-
-n8n stores encrypted credentials using this key. Never regenerate or replace it after credentials are in use unless you are intentionally performing an encryption-key migration.
-
-The official image runs as UID/GID `1000`, so prepare ownership and permissions:
+The official image runs as UID/GID `1000`:
 
 ```bash
 sudo chown -R 1000:1000 /srv/apps/n8n/data
 sudo chown 1000:1000 /srv/apps/n8n/secrets/db_password
 sudo chown 1000:1000 /srv/apps/n8n/secrets/encryption_key
+sudo chown 1000:1000 /srv/apps/n8n/secrets/redis_password
+
 sudo chmod 700 /srv/apps/n8n/data /srv/apps/n8n/secrets
 sudo chmod 600 /srv/apps/n8n/secrets/db_password
 sudo chmod 600 /srv/apps/n8n/secrets/encryption_key
+sudo chmod 600 /srv/apps/n8n/secrets/redis_password
 sudo chmod 755 /srv/apps/n8n/entrypoint.sh
 ```
 
-The custom entrypoint reads the two secret files, exports `DB_POSTGRESDB_PASSWORD` and `N8N_ENCRYPTION_KEY` only inside the container process, then starts n8n.
-
-## 5. Confirm the shared Docker network
+## 6. Docker networks
 
 ```bash
 docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
+docker network inspect redis_net >/dev/null 2>&1 || docker network create redis_net
+docker network inspect media_net >/dev/null 2>&1 || docker network create media_net
 ```
 
-The PostgreSQL container must already be attached to this network with the `postgres` alias.
+Expected service aliases:
 
-## 6. Start n8n
+```text
+postgres -> shared PostgreSQL on postgres_net
+redis -> shared Redis on redis_net
+media-service -> Media Service on media_net
+```
+
+## 7. Start queue mode
 
 ```bash
 cd /srv/apps/n8n
 
 docker compose config
 docker compose pull
-docker compose up -d
+docker compose up -d --force-recreate
 ```
 
 Verify:
@@ -158,92 +204,90 @@ Verify:
 ```bash
 docker compose ps
 docker logs n8n --tail 100
+docker logs n8n-worker --tail 100
 ```
 
-The expected host binding is:
+Expected containers:
 
 ```text
-127.0.0.1:5678 -> 5678/tcp
+n8n          healthy
+n8n-worker   healthy
 ```
 
-Test the local health endpoint:
+The worker log should include a ready message and concurrency value `5`.
+
+## 8. Health checks
+
+Main:
 
 ```bash
-curl -fsS http://127.0.0.1:5678/healthz
+curl -fsS http://127.0.0.1:5678/healthz/readiness
 ```
 
-## 7. Nginx reverse proxy
-
-Copy the example and replace the placeholder domain:
+Worker from inside its container:
 
 ```bash
-sudo cp /srv/apps/n8n/nginx.conf.example /etc/nginx/sites-available/n8n
-sudo nano /etc/nginx/sites-available/n8n
-sudo ln -sf /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/n8n
-sudo nginx -t
-sudo systemctl reload nginx
+docker exec n8n-worker \
+  node -e "fetch('http://127.0.0.1:5678/healthz/readiness').then(async r=>console.log(r.status,await r.text()))"
 ```
 
-Create DNS first:
+## 9. Redis verification
+
+Confirm both containers joined `redis_net`:
+
+```bash
+docker network inspect redis_net \
+  --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
+```
+
+Expected to include:
 
 ```text
-n8n.example.com -> YOUR_VPS_PUBLIC_IP
+platform-redis
+n8n
+n8n-worker
 ```
 
-Then issue HTTPS:
+A production workflow execution should be received by the main instance and executed by `n8n-worker`.
 
-```bash
-sudo certbot --nginx -d n8n.example.com
-```
+## 10. Nginx / HTTPS
 
-The compose stack sets `N8N_PROXY_HOPS=1`, `WEBHOOK_URL`, and `N8N_EDITOR_BASE_URL` for the single host-Nginx reverse-proxy hop.
-
-## 8. Verify externally
-
-Open:
+The main process stays on:
 
 ```text
-https://n8n.example.com
+127.0.0.1:5678
 ```
 
-Then verify HTTPS and health:
+Public traffic goes through host Nginx and HTTPS. Worker port `5678` remains Docker-internal only and is used solely for worker health endpoints.
 
-```bash
-curl -I https://n8n.example.com
-curl -fsS https://n8n.example.com/healthz
+## 11. Docker Services integration
+
+The Docker agent allowlist includes both:
+
+```text
+n8n
+n8n-worker
 ```
 
-On first launch, create the n8n owner account in the web UI.
+After recreating the Docker agent, Platform Admin `/docker` can show and control both containers independently.
 
-## 9. Docker Services integration
+## Scaling later
 
-The VSM Docker agent default allowlist includes the `n8n` container. After updating/recreating the agent, `/docker` can display n8n metrics, logs, lifecycle controls, and CPU/RAM limits alongside the existing platform services.
+Start with one worker at concurrency `5`. If queue wait time grows while the VPS still has safe CPU/RAM and PostgreSQL capacity, either increase `N8N_WORKER_CONCURRENCY` or add another worker. Avoid many low-concurrency workers because each worker adds database connections and process overhead.
 
-## 10. Update n8n
-
-Do not blindly use `latest` in production. Check the n8n release notes, update `N8N_VERSION` in `/srv/apps/n8n/.env`, then:
-
-```bash
-cd /srv/apps/n8n
-docker compose pull
-docker compose up -d
-
-docker compose ps
-docker logs n8n --tail 100
-```
-
-Keep the database, `/srv/apps/n8n/data`, and `/srv/apps/n8n/secrets/encryption_key` backed up before major upgrades.
+Webhook processor containers are not required initially. Add them only when incoming webhook traffic itself becomes a bottleneck.
 
 ## Security invariants
 
 ```text
-n8n port 5678 remains bound to 127.0.0.1 only.
-Public access goes through host Nginx + HTTPS.
-n8n uses a dedicated PostgreSQL database and role.
-The database password is not committed to Git.
-The n8n encryption key is not committed to Git.
-The encryption key is persistent and must not be casually rotated.
-The app connects only to postgres_net unless another network is explicitly required.
-Execution history pruning is enabled by default.
-Diagnostics and personalization telemetry are disabled in this stack.
+n8n main port 5678 remains bound to 127.0.0.1 only.
+n8n-worker publishes no host port.
+Redis plaintext 6379 remains Docker-private.
+n8n uses a dedicated Redis ACL user, not platform_controller.
+Redis queue password is stored only in secrets/redis_password.
+PostgreSQL and Redis are shared infrastructure but use dedicated app identities.
+Main and worker use the exact same persistent N8N_ENCRYPTION_KEY.
+Queue binary mode is database, never local filesystem.
+Media Service remains the durable application file store.
+Secrets are never committed to Git.
 ```
