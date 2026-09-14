@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isAuthenticated } from "@/lib/auth";
 import {
   createDatabaseWithRole,
   deleteDatabaseAndRole,
@@ -8,7 +9,15 @@ import {
 
 export const dynamic = "force-dynamic";
 
+async function unauthorized() {
+  if (await isAuthenticated()) return null;
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
 export async function GET() {
+  const denied = await unauthorized();
+  if (denied) return denied;
+
   try {
     return NextResponse.json(await listPostgresResources());
   } catch (error) {
@@ -20,6 +29,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const denied = await unauthorized();
+  if (denied) return denied;
+
   try {
     const body = await request.json();
 
