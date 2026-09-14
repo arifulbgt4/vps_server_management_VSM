@@ -50,11 +50,16 @@ chmod 600 .env
 openssl rand -hex 32 > secrets/root_password
 openssl rand -hex 32 > secrets/controller_password
 openssl rand -hex 64 > secrets/replica_keyfile
-chmod 600 secrets/root_password secrets/controller_password
-chmod 400 secrets/replica_keyfile
+sudo chown root:root secrets/root_password
+sudo chmod 600 secrets/root_password
+sudo chown 1001:1001 secrets/controller_password
+sudo chmod 600 secrets/controller_password
+sudo chmod 400 secrets/replica_keyfile
 
 docker network inspect mongo_net >/dev/null 2>&1 || docker network create mongo_net
 ```
+
+`controller_password` is owned by UID/GID 1001 because Platform Admin runs as UID/GID 1001 and mounts that file read-only. Root and replica-keyfile secrets are not mounted into Platform Admin.
 
 The official Mongo image normally runs the database process as UID/GID 999. Verify on a new major image before applying ownership:
 
@@ -86,7 +91,7 @@ mongodb://platform_controller:...@mongodb:27017/admin?authSource=admin&replicaSe
 
 The root credential remains outside Platform Admin.
 
-The `/mongodb` manager supports managed database + user creation, existing-user assignment, password rotation, encrypted connection reveal, database/user deletion and database size reporting.
+The `/mongodb` manager supports managed database + user creation, password rotation, encrypted connection reveal, database/user deletion and database size reporting.
 
 Application users receive `readWrite` only on their own managed database.
 
