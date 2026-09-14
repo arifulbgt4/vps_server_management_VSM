@@ -6,7 +6,7 @@
 }
 
 .shell {
-  width: min(1200px, 100%);
+  width: min(1280px, 100%);
   margin: 0 auto;
 }
 
@@ -38,7 +38,7 @@
   color: #b8c4cf;
   padding: 10px 12px;
   border-radius: 8px;
-  max-width: 420px;
+  max-width: 440px;
   font-size: 13px;
 }
 
@@ -83,7 +83,8 @@
   font-size: 13px;
 }
 
-.secret code {
+.secret code,
+.inlineSecret code {
   display: block;
   background: #08100a;
   padding: 8px 10px;
@@ -104,7 +105,8 @@
 }
 
 .card,
-.tableCard {
+.tableCard,
+.tableCardWide {
   border: 1px solid #202b36;
   background: #111821;
   border-radius: 12px;
@@ -118,7 +120,8 @@
 }
 
 .card h2,
-.tableCard h2 {
+.tableCard h2,
+.tableCardWide h2 {
   font-size: 16px;
   margin-bottom: 6px;
 }
@@ -144,7 +147,8 @@
 }
 
 .card button,
-.secret button {
+.secret button,
+.smallButton {
   border: 0;
   background: #e8edf2;
   color: #0b0f14;
@@ -154,7 +158,8 @@
   cursor: pointer;
 }
 
-.card button:disabled {
+.card button:disabled,
+.smallButton:disabled {
   opacity: 0.5;
   cursor: wait;
 }
@@ -178,7 +183,7 @@
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
@@ -197,6 +202,7 @@
   text-align: left;
   border-bottom: 1px solid #202b36;
   padding: 10px 8px;
+  vertical-align: top;
 }
 
 .tableWrap th {
@@ -204,15 +210,39 @@
   font-weight: 500;
 }
 
+.connectionCell {
+  min-width: 320px;
+}
+
+.inlineSecret {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.inlineSecret code {
+  max-width: 620px;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.smallButton {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.muted {
+  color: #73808c;
+  font-size: 12px;
+}
+
 .page code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 @media (max-width: 900px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
   .topbar,
   .secretHeader {
     flex-direction: column;
@@ -222,7 +252,8 @@
     align-items: stretch;
   }
 
-  .secretRow {
+  .secretRow,
+  .inlineSecret {
     grid-template-columns: 1fr;
   }
 }
