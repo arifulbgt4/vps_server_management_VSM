@@ -37,6 +37,10 @@ Complete production architecture, security rules, deployment procedures, verific
 
 **[docs/PRODUCTION_SETUP.md](docs/PRODUCTION_SETUP.md)**
 
+MongoDB production implementation roadmap (planned, not deployed yet):
+
+**[docs/MONGODB_IMPLEMENTATION_PLAN.md](docs/MONGODB_IMPLEMENTATION_PLAN.md)**
+
 Application-specific documentation:
 
 **[srv/apps/platform-admin/README.md](srv/apps/platform-admin/README.md)**
@@ -129,6 +133,34 @@ Platform Admin reaches the private media admin API through `media_net`. n8n reac
 http://media-service:8080
 ```
 
+## Planned MongoDB service
+
+MongoDB is planned as an independent shared infrastructure service; it is **not deployed yet**.
+
+Target architecture:
+
+```text
+platform-mongodb
+  -> private mongo_net
+  -> authentication enabled
+  -> single-node replica set rs0
+  -> persistent /data/db
+
+Platform Admin /mongodb
+  -> dedicated controller identity
+  -> create/manage per-database application users
+  -> encrypted credential reveal through the existing vault
+
+n8n + n8n-worker
+  -> private mongodb:27017 connectivity on mongo_net
+```
+
+The first phase keeps port `27017` private. Public MongoDB access is explicitly deferred until a separate TLS/firewall/replica-set hostname review is completed.
+
+See the full implementation and acceptance plan:
+
+**[docs/MONGODB_IMPLEMENTATION_PLAN.md](docs/MONGODB_IMPLEMENTATION_PLAN.md)**
+
 ## Load balancing
 
 A separate load balancer is not required for the current single-VPS deployment. Host Nginx handles reverse proxying and TLS, while Redis distributes n8n execution jobs to workers.
@@ -137,4 +169,4 @@ Add HTTP load balancing only after deploying multiple HTTP-facing instances, and
 
 ## Secrets
 
-Do not commit any file from a `secrets/` directory, private key, password, bearer token, Redis credential, credential-vault master key, n8n encryption key, media admin token, or generated application credential.
+Do not commit any file from a `secrets/` directory, private key, password, bearer token, Redis credential, credential-vault master key, n8n encryption key, media admin token, MongoDB keyfile/credential, or generated application credential.
