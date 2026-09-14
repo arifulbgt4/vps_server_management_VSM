@@ -2,47 +2,49 @@
 
 Production-oriented multi-user media/file storage for the VSM host.
 
-The service supports images, video, audio, PDF, Office/OpenDocument files, text/CSV/Markdown and common archives. Each media user receives an independent API key and storage quota. Files are stored on the VPS filesystem while metadata, ownership and quota accounting live in PostgreSQL.
+The service supports images, video, audio, PDF, Office/OpenDocument files, text/CSV/Markdown and common archives. Each media user receives an independent bearer API key and optional storage quota. Physical files live on the VPS filesystem while ownership, metadata and quota accounting live in PostgreSQL.
 
-Documentation examples use `example.com`. Replace them with the real production domain.
+Documentation examples use `example.com`. Replace them only in VPS runtime configuration.
 
 ## Architecture
 
 ```text
 Internet
-  -> HTTPS / Nginx
+  -> HTTPS / host Nginx
   -> 127.0.0.1:8082
   -> platform-media
-      ├── /storage on the VPS
-      └── postgres_net -> postgres:5432 -> shared PostgreSQL
+      ├── /storage
+      └── postgres_net -> postgres:5432
 
 Platform Admin
   -> media_net
   -> media-service:8080 admin API
 
-n8n
+n8n main + workers
   -> media_net
-  -> media-service:8080 user API
+  -> media-service:8080 user/binary API
 ```
 
-The public host port is bound to loopback only. `media_net` is the private Docker network used by trusted same-VPS applications.
+The host binding is loopback-only. Public traffic reaches the service through Nginx. Trusted same-VPS applications use `media_net`.
 
 ## Core behavior
 
-- Per-user bearer API keys.
-- Per-user quota in bytes; Platform Admin presents quota in GiB.
-- Blank quota means unlimited for that user, but host free-space protection still applies.
-- User quota is checked transactionally with a PostgreSQL row lock.
-- A configurable host reserve prevents uploads from consuming the final disk space.
-- Public and private files.
-- Authenticated binary download endpoint for n8n.
-- Optional public URL for files explicitly uploaded as `visibility=public`.
-- Hard file deletion removes both the PostgreSQL row and physical file.
-- Hard user deletion removes the user, API key, metadata and all files.
-- Dangerous executable/web-active extensions are rejected by default.
-- Common binary formats receive basic signature validation.
-- Original filenames never become storage paths; physical names are random UUIDs.
-- SHA-256 checksum is stored for every upload.
+```text
+per-user bearer API keys
+per-user quota in bytes / GiB in Platform Admin
+transactional quota checks
+host free-space reserve
+private/public files
+authenticated binary download
+optional public file URLs
+hard file deletion
+hard user + all-files deletion
+MIME/extension validation
+UUID storage names
+SHA-256 checksum per file
+```
+
+Blank quota means unlimited for that user, but the host reserve and per-file maximum still apply.
 
 ## Runtime layout
 
@@ -65,18 +67,18 @@ The public host port is bound to loopback only. `media_net` is the private Docke
 
 `.env`, `storage/` and `secrets/` are ignored by Git.
 
-## 1. Create PostgreSQL database and role
+## 1. PostgreSQL database and role
 
-Use Platform Admin `/postgres` and create a dedicated application database/role, for example:
+Use Platform Admin `/postgres` to create a dedicated database/role, for example:
 
 ```text
 Database: media_service
 User:     media_app
 ```
 
-Do not use `postgres`, `platform_controller` or `platform_app` as the runtime media identity.
+Do not use `postgres`, `platform_controller` or `platform_app` as the runtime Media identity.
 
-## 2. Copy the app
+## 2. Copy/update the app
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -88,20 +90,24 @@ sudo chown -R ariful:ariful /srv/apps/media-service
 cp -a srv/apps/media-service/. /srv/apps/media-service/
 ```
 
-## 3. Runtime directories and Docker network
+## 3. Runtime directories and networks
 
 ```bash
 cd /srv/apps/media-service
-
 mkdir -p storage/.tmp storage/.trash secrets
-cp .env.example .env
-chmod 600 .env
 
 docker network inspect media_net >/dev/null 2>&1 || docker network create media_net
 docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
 ```
 
-Edit `.env`:
+If `.env` does not already exist:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+Example runtime settings:
 
 ```env
 MEDIA_DB_NAME=media_service
@@ -115,13 +121,18 @@ MEDIA_ALLOW_OTHER_FILES=false
 MEDIA_DB_POOL_MAX=10
 ```
 
-`MEDIA_MAX_UPLOAD_BYTES=536870912` is a 512 MiB per-file cap. This is independent from a user's total quota.
+Defaults represented above:
 
-`MEDIA_MIN_FREE_BYTES=5368709120` reserves 5 GiB of filesystem capacity from uploads.
+```text
+per-file maximum   512 MiB
+host reserve       5 GiB
+```
 
-## 4. Create secrets
+Per-user quota is independent from the per-file maximum.
 
-Write the PostgreSQL password without putting it in shell history:
+## 4. Secrets
+
+Write the PostgreSQL password without placing it in shell history:
 
 ```bash
 read -s MEDIA_DB_PASSWORD
@@ -130,26 +141,24 @@ printf '%s' "$MEDIA_DB_PASSWORD" > /srv/apps/media-service/secrets/db_password
 unset MEDIA_DB_PASSWORD
 ```
 
-Generate the service admin token once:
+Generate the media admin token once:
 
 ```bash
 openssl rand -hex 32 > /srv/apps/media-service/secrets/admin_token
 ```
 
-The service image runs as UID/GID 1000:
+Permissions for the service UID/GID 1000:
 
 ```bash
 sudo chown -R 1000:1000 /srv/apps/media-service/storage
 sudo chown 1000:1000 /srv/apps/media-service/secrets/db_password
 sudo chown 1000:1000 /srv/apps/media-service/secrets/admin_token
-
-sudo chmod 700 /srv/apps/media-service/storage
-sudo chmod 700 /srv/apps/media-service/secrets
+sudo chmod 700 /srv/apps/media-service/storage /srv/apps/media-service/secrets
 sudo chmod 600 /srv/apps/media-service/secrets/db_password
 sudo chmod 600 /srv/apps/media-service/secrets/admin_token
 ```
 
-## 5. Start
+## 5. Start and health
 
 ```bash
 cd /srv/apps/media-service
@@ -160,7 +169,7 @@ docker compose ps
 docker logs platform-media --tail 100
 ```
 
-Health:
+Local health:
 
 ```bash
 curl -fsS http://127.0.0.1:8082/healthz
@@ -172,7 +181,7 @@ Expected:
 {"status":"ok"}
 ```
 
-The service creates its `media_users` and `media_files` tables automatically inside the selected media database.
+The service creates its required media tables automatically in the configured database.
 
 ## 6. Nginx and HTTPS
 
@@ -182,17 +191,6 @@ sudo nano /etc/nginx/sites-available/media
 sudo ln -sf /etc/nginx/sites-available/media /etc/nginx/sites-enabled/media
 sudo nginx -t
 sudo systemctl reload nginx
-```
-
-Create DNS:
-
-```text
-media.example.com -> VPS_PUBLIC_IP
-```
-
-Then:
-
-```bash
 sudo certbot --nginx -d media.example.com
 ```
 
@@ -202,11 +200,13 @@ Verify:
 curl -fsS https://media.example.com/healthz
 ```
 
+The public Nginx configuration streams uploads and must keep `/api/v1/admin/*` inaccessible from the public internet.
+
 ## 7. Platform Admin integration
 
-Platform Admin connects to the private admin API through `media_net`.
+Platform Admin reaches the private admin API through `media_net`.
 
-Create the app-local readable token copy:
+Install a UID/GID 1001 copy of the admin token:
 
 ```bash
 sudo install \
@@ -215,101 +215,155 @@ sudo install \
   /srv/apps/platform-admin/secrets/media_admin_token
 ```
 
-The repository Platform Admin compose mounts this file and exposes the Media Storage manager at:
+Manager URL:
 
 ```text
 /media
 ```
 
-The panel can create users, set individual GiB quotas, enable/disable users, rotate API keys, inspect file lists, hard-delete individual files, hard-delete a user and all files, and view media/host storage usage.
+The panel can:
 
-The API key is returned only during user creation/rotation. The service stores only its SHA-256 hash.
+```text
+create users
+set individual GiB quotas
+show used/available storage
+enable/disable users
+rotate user API keys
+show/hide/copy vault-backed API keys
+list files
+hard-delete files
+hard-delete user + all owned files
+view media/host storage usage
+copy Next.js API examples
+```
 
-## User API
+### API-key storage model
 
-Every request below uses:
+The Media Service itself stores only the API-key hash required for authentication.
+
+Platform Admin separately stores an AES-256-GCM encrypted copy in its credential vault when a user is created or when the key is rotated. This enables authenticated Show/Hide/Copy behavior without changing the Media Service's hash-only authentication model.
+
+An older key created before vault storage cannot be reconstructed from the Media Service hash. Rotate it once to create a new vault-backed key.
+
+## 8. User API
+
+Every authenticated request uses:
 
 ```http
 Authorization: Bearer ms_live_...
 ```
 
-### Storage usage
+Endpoints:
 
-```http
-GET /api/v1/storage
+```text
+GET    /api/v1/storage
+POST   /api/v1/files
+GET    /api/v1/files?limit=50&offset=0
+GET    /api/v1/files/:id
+GET    /api/v1/files/:id/content
+PATCH  /api/v1/files/:id
+DELETE /api/v1/files/:id
 ```
 
-### Upload
-
-```http
-POST /api/v1/files
-Content-Type: multipart/form-data
-```
-
-Fields:
+Upload form fields:
 
 ```text
 file        required
 visibility  optional: private | public
 ```
 
-Example:
+For `visibility=public`, the response includes a public URL when public file serving is enabled.
 
-```bash
-curl \
-  -H "Authorization: Bearer $MEDIA_API_KEY" \
-  -F "visibility=private" \
-  -F "file=@./product.mp4" \
-  https://media.example.com/api/v1/files
+## 9. Recommended Next.js server-side usage
+
+Keep the Media API key server-side:
+
+```env
+# .env.local
+MEDIA_BASE_URL=https://media.example.com
+MEDIA_API_KEY=ms_live_...
 ```
 
-For `visibility=public`, `public_url` is returned when public files are enabled.
+Example App Router handler pattern:
 
-### List and metadata
+```ts
+// app/api/media/route.ts
+const baseUrl = process.env.MEDIA_BASE_URL!;
+const apiKey = process.env.MEDIA_API_KEY!;
 
-```http
-GET /api/v1/files?limit=50&offset=0
-GET /api/v1/files/:id
+const auth = {
+  Authorization: `Bearer ${apiKey}`,
+};
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const fileId = url.searchParams.get("fileId");
+  const mode = url.searchParams.get("mode");
+
+  const path = fileId
+    ? `/api/v1/files/${fileId}${mode === "content" ? "/content" : ""}`
+    : mode === "storage"
+      ? "/api/v1/storage"
+      : "/api/v1/files";
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: auth,
+    cache: "no-store",
+  });
+
+  if (mode === "content" && fileId) {
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        "content-type": response.headers.get("content-type") || "application/octet-stream",
+      },
+    });
+  }
+
+  return Response.json(await response.json(), { status: response.status });
+}
+
+export async function POST(request: Request) {
+  const formData = await request.formData();
+  const response = await fetch(`${baseUrl}/api/v1/files`, {
+    method: "POST",
+    headers: auth,
+    body: formData,
+  });
+
+  return Response.json(await response.json(), { status: response.status });
+}
+
+export async function DELETE(request: Request) {
+  const fileId = new URL(request.url).searchParams.get("fileId");
+  if (!fileId) return Response.json({ error: "fileId is required" }, { status: 400 });
+
+  const response = await fetch(`${baseUrl}/api/v1/files/${fileId}`, {
+    method: "DELETE",
+    headers: auth,
+  });
+
+  return Response.json(await response.json(), { status: response.status });
+}
 ```
 
-### Actual binary
+This keeps `MEDIA_API_KEY` out of browser JavaScript.
 
-```http
-GET /api/v1/files/:id/content
-```
+## 10. n8n usage
 
-This is the preferred endpoint for n8n when it needs to send the actual binary to Messenger/Meta rather than sending a URL.
-
-### Change visibility
-
-```http
-PATCH /api/v1/files/:id
-Content-Type: application/json
-
-{"visibility":"public"}
-```
-
-### Hard delete
-
-```http
-DELETE /api/v1/files/:id
-```
-
-A successful delete removes the physical file and DB row and releases the user's used quota.
-
-## n8n example
-
-Once `n8n` is attached to `media_net`, it can avoid the public internet hop:
+n8n main and workers are attached to `media_net`, so workflows can avoid the public internet hop:
 
 ```text
 http://media-service:8080/api/v1/files/<FILE_ID>/content
 ```
 
-Use an HTTP Request node with the media user's bearer API key and response format `File`. The returned n8n binary can then be uploaded to the Meta Messenger attachment API.
+Use an HTTP Request node with the media user's bearer key and response format `File` when the workflow needs the actual binary.
 
-## Admin API
+For Messenger/Meta delivery, the workflow can fetch this binary, upload it to Meta's attachment API, obtain the provider attachment identifier, then send the message.
 
-Admin endpoints are private-token protected:
+## 11. Admin API
+
+Private-token-protected endpoints:
 
 ```text
 GET    /api/v1/admin/overview
@@ -322,36 +376,56 @@ DELETE /api/v1/admin/files/:id
 DELETE /api/v1/admin/users/:id?confirm=true
 ```
 
-Do not expose the admin token to browsers or n8n workflow data.
+Do not expose the media admin token to browsers or workflow data.
 
-## Quota semantics
+## 12. Quota semantics
 
-If a user has 2 GiB quota and 1.4 GiB used, the service accepts an upload only when:
+An upload is accepted only when both conditions pass:
 
 ```text
-used + incoming_size <= quota
+used + incoming_size <= user_quota
 AND
 host_available - incoming_size >= MEDIA_MIN_FREE_BYTES
 ```
 
-The user row is locked during the final quota check/commit, so concurrent uploads cannot both consume the same remaining quota. Quota cannot be reduced below current usage.
+The user row is locked during the final quota check and commit, preventing concurrent uploads from both consuming the same remaining quota.
 
-## Hard-delete semantics
+Quota cannot be reduced below current stored usage.
 
-For individual files, the physical file is first moved to the service trash area, then the DB row and quota accounting are committed. If the DB operation fails, the file is restored. After a successful commit, the temporary trash copy is removed.
+## 13. Hard-delete semantics
 
-For user deletion, the account is disabled first, the user's storage directory is moved out of the active tree, the user row is deleted with cascading metadata deletion, then the storage tree is removed.
-
-External copies previously uploaded to Meta, S3 or another provider are outside this service and are not automatically removed by a local hard delete.
-
-## Security defaults
+Individual file deletion:
 
 ```text
-Host port 8082 is loopback-only.
-Admin API requires a separate high-entropy token.
-User API keys are stored only as SHA-256 hashes.
+active file -> service trash -> DB metadata/quota commit -> trash removal
+```
+
+If the database operation fails, the file can be restored from the temporary trash location.
+
+User deletion disables the account, removes the active storage tree, deletes the user/metadata, then permanently removes the staged storage tree.
+
+External copies previously uploaded to Meta, S3 or another provider are outside this service and are not removed automatically by a local hard delete.
+
+## 14. Backup requirements
+
+To recover Media Storage, back up both:
+
+```text
+media PostgreSQL database
+/srv/apps/media-service/storage
+```
+
+A database-only backup is insufficient because the physical file bytes are stored on disk.
+
+## 15. Security defaults
+
+```text
+Host 8082 is loopback-only.
+Admin API uses a separate high-entropy token.
+User API keys are hash-only inside the Media Service.
+Recoverable UI copies are encrypted separately in Platform Admin.
 Uploads use UUID storage names.
-Executable and active-web extensions are blocked by default.
+Executable/active-web extensions are blocked by default.
 Common binary formats receive signature checks.
 Public serving requires visibility=public.
 Private binary responses use no-store.
@@ -359,6 +433,7 @@ X-Content-Type-Options: nosniff is set on file responses.
 The final 5 GiB of host storage is protected by default.
 Database access stays on postgres_net.
 Same-VPS application access stays on media_net.
+Secrets are never committed to Git.
 ```
 
-If a broader file policy is required, set `MEDIA_ALLOW_OTHER_FILES=true` only after evaluating the security implications.
+If a broader file policy is required, enable `MEDIA_ALLOW_OTHER_FILES=true` only after evaluating the security implications.
