@@ -58,7 +58,7 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: /srv/infrastructure/management/docker-agent/secrets/control_token
+        source: ./secrets/docker_agent_token
         target: /run/secrets/docker_agent_token
         read_only: true
         bind:
