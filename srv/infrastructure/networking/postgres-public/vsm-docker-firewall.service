@@ -3,6 +3,7 @@ Description=VSM Docker-aware firewall policy
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
+PartOf=docker.service
 
 [Service]
 Type=oneshot
