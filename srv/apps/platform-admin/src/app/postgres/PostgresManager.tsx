@@ -7,6 +7,7 @@ type DatabaseRow = {
   name: string;
   owner: string;
   size_bytes: string;
+  credential_available: boolean;
 };
 
 type RoleRow = {
@@ -38,6 +39,12 @@ type Credential = {
   connection?: Connection | null;
 };
 
+type RevealedConnection = {
+  role: string;
+  password: string;
+  url: string;
+};
+
 const RESERVED_ROLES = new Set(["postgres", "platform_controller", "platform_app"]);
 
 export default function PostgresManager() {
@@ -53,6 +60,7 @@ export default function PostgresManager() {
   const [deleteRoleToo, setDeleteRoleToo] = useState(false);
   const [credential, setCredential] = useState<Credential | null>(null);
   const [showCredential, setShowCredential] = useState(false);
+  const [revealedConnections, setRevealedConnections] = useState<Record<string, RevealedConnection>>({});
   const [message, setMessage] = useState("Loading PostgreSQL...");
   const [busy, setBusy] = useState(false);
 
@@ -76,16 +84,21 @@ export default function PostgresManager() {
     refresh().catch((error) => setMessage(error.message));
   }, [refresh]);
 
+  async function request(payload: Record<string, string>) {
+    const response = await fetch("/api/postgres", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Operation failed");
+    return data;
+  }
+
   async function action(payload: Record<string, string>) {
     setBusy(true);
     try {
-      const response = await fetch("/api/postgres", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Operation failed");
+      const data = await request(payload);
 
       if (data.password) {
         setCredential({
@@ -96,13 +109,17 @@ export default function PostgresManager() {
         });
         setShowCredential(false);
         setMessage(
-          `Credential generated for ${data.role}. It is held only in this browser session; copy it before leaving the page.`,
+          data.credential_stored === false
+            ? `Password changed for ${data.role}, but the encrypted credential vault could not be updated. Copy it now.`
+            : `Credential generated for ${data.role} and stored encrypted for future URL reveal.`,
         );
       } else if (payload.action === "create-existing-role") {
         setCredential(null);
         setShowCredential(false);
         setMessage(
-          `Database ${data.database} created for existing user ${data.role}. Its existing password was not changed or read.`,
+          data.credential_available
+            ? `Database ${data.database} created for ${data.role}. Its saved credential can be revealed from the database list.`
+            : `Database ${data.database} created for ${data.role}. Rotate that user's password once if you want the URL reveal feature.`,
         );
       } else {
         setCredential(null);
@@ -110,11 +127,43 @@ export default function PostgresManager() {
         setMessage("Operation completed");
       }
 
+      setRevealedConnections({});
       await refresh();
       return data;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Operation failed");
       throw error;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleConnection(item: DatabaseRow) {
+    if (revealedConnections[item.name]) {
+      setRevealedConnections((current) => {
+        const next = { ...current };
+        delete next[item.name];
+        return next;
+      });
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const data = await request({ action: "get-connection", database: item.name });
+      if (!data.connection?.url) {
+        throw new Error("Remote PostgreSQL host is not configured");
+      }
+      setRevealedConnections((current) => ({
+        ...current,
+        [item.name]: {
+          role: data.role,
+          password: data.password,
+          url: data.connection.url,
+        },
+      }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to reveal connection URL");
     } finally {
       setBusy(false);
     }
@@ -132,11 +181,7 @@ export default function PostgresManager() {
   async function createForExistingRole(event: FormEvent) {
     event.preventDefault();
     try {
-      await action({
-        action: "create-existing-role",
-        database: existingDatabase,
-        role: existingRole,
-      });
+      await action({ action: "create-existing-role", database: existingDatabase, role: existingRole });
       setExistingDatabase("");
     } catch {}
   }
@@ -144,17 +189,12 @@ export default function PostgresManager() {
   async function rotate(event: FormEvent) {
     event.preventDefault();
     try {
-      await action({
-        action: "rotate-password",
-        role: rotateRole,
-        database: rotateDatabase,
-      });
+      await action({ action: "rotate-password", role: rotateRole, database: rotateDatabase });
     } catch {}
   }
 
   async function remove(event: FormEvent) {
     event.preventDefault();
-
     const target = deleteRoleToo
       ? `database ${deleteDatabase} and role ${deleteRole}`
       : `database ${deleteDatabase}`;
@@ -188,8 +228,8 @@ export default function PostgresManager() {
           <section className={styles.secret}>
             <div className={styles.secretHeader}>
               <div>
-                <strong>One-time database credential</strong>
-                <p>Hidden by default. The password is not stored by Platform Admin.</p>
+                <strong>Database credential</strong>
+                <p>Hidden by default. The password is encrypted at rest in the Platform Admin credential vault.</p>
               </div>
               <button type="button" onClick={() => setShowCredential((value) => !value)}>
                 {showCredential ? "Hide" : "Show URL & password"}
@@ -201,21 +241,13 @@ export default function PostgresManager() {
                 <div className={styles.secretRow}>
                   <span>Password</span>
                   <code>{credential.password}</code>
-                  <button type="button" onClick={() => navigator.clipboard.writeText(credential.password)}>
-                    Copy password
-                  </button>
+                  <button type="button" onClick={() => navigator.clipboard.writeText(credential.password)}>Copy password</button>
                 </div>
-
                 {credential.connection?.url ? (
                   <div className={styles.secretRow}>
                     <span>Remote PostgreSQL URL</span>
                     <code>{credential.connection.url}</code>
-                    <button
-                      type="button"
-                      onClick={() => navigator.clipboard.writeText(credential.connection?.url || "")}
-                    >
-                      Copy URL
-                    </button>
+                    <button type="button" onClick={() => navigator.clipboard.writeText(credential.connection?.url || "")}>Copy URL</button>
                   </div>
                 ) : (
                   <p className={styles.warning}>Remote PostgreSQL host is not configured.</p>
@@ -236,18 +268,9 @@ export default function PostgresManager() {
 
           <form className={styles.card} onSubmit={createForExistingRole}>
             <h2>Create DB using existing user</h2>
-            <p>The existing password is preserved. Platform Admin cannot read an existing PostgreSQL password.</p>
-            <input
-              value={existingDatabase}
-              onChange={(e) => setExistingDatabase(e.target.value)}
-              placeholder="database_name"
-              required
-            />
-            <select
-              value={existingRole}
-              onChange={(e) => setExistingRole(e.target.value)}
-              required
-            >
+            <p>If the user's credential is already in the encrypted vault, the new database URL can be revealed immediately.</p>
+            <input value={existingDatabase} onChange={(e) => setExistingDatabase(e.target.value)} placeholder="database_name" required />
+            <select value={existingRole} onChange={(e) => setExistingRole(e.target.value)} required>
               <option value="">Select existing user</option>
               {assignableRoles.map((item) => (
                 <option key={item.name} value={item.name}>{item.name}</option>
@@ -258,7 +281,7 @@ export default function PostgresManager() {
 
           <form className={styles.card} onSubmit={rotate}>
             <h2>Rotate user password</h2>
-            <p>Generates a new password and a fresh remote URL for a database owned by that user.</p>
+            <p>Generates a new password and stores it encrypted so URLs can be revealed later.</p>
             <input value={rotateDatabase} onChange={(e) => setRotateDatabase(e.target.value)} placeholder="database_name" required />
             <input value={rotateRole} onChange={(e) => setRotateRole(e.target.value)} placeholder="app_user" required />
             <button disabled={busy}>Generate new password</button>
@@ -267,46 +290,61 @@ export default function PostgresManager() {
           <form className={styles.card} onSubmit={remove}>
             <h2>Delete database</h2>
             <p>By default only the database is deleted, so shared existing users remain safe.</p>
-            <input
-              value={deleteDatabase}
-              onChange={(e) => setDeleteDatabase(e.target.value)}
-              placeholder="database_name"
-              required
-            />
+            <input value={deleteDatabase} onChange={(e) => setDeleteDatabase(e.target.value)} placeholder="database_name" required />
             <label className={styles.checkbox}>
-              <input
-                type="checkbox"
-                checked={deleteRoleToo}
-                onChange={(e) => setDeleteRoleToo(e.target.checked)}
-              />
+              <input type="checkbox" checked={deleteRoleToo} onChange={(e) => setDeleteRoleToo(e.target.checked)} />
               Also delete its PostgreSQL user
             </label>
             {deleteRoleToo && (
-              <input
-                value={deleteRole}
-                onChange={(e) => setDeleteRole(e.target.value)}
-                placeholder="app_user"
-                required
-              />
+              <input value={deleteRole} onChange={(e) => setDeleteRole(e.target.value)} placeholder="app_user" required />
             )}
             <button className={styles.danger} disabled={busy}>Delete permanently</button>
           </form>
         </section>
 
         <section className={styles.grid}>
-          <div className={styles.tableCard}>
+          <div className={styles.tableCardWide}>
             <h2>Databases</h2>
             <div className={styles.tableWrap}>
               <table>
-                <thead><tr><th>Name</th><th>Owner</th><th>Size</th></tr></thead>
+                <thead>
+                  <tr><th>Name</th><th>Owner</th><th>Size</th><th>Connection</th></tr>
+                </thead>
                 <tbody>
-                  {resources.databases.map((item) => (
-                    <tr key={item.name}>
-                      <td><code>{item.name}</code></td>
-                      <td>{item.owner}</td>
-                      <td>{formatBytes(Number(item.size_bytes))}</td>
-                    </tr>
-                  ))}
+                  {resources.databases.map((item) => {
+                    const revealed = revealedConnections[item.name];
+                    return (
+                      <tr key={item.name}>
+                        <td><code>{item.name}</code></td>
+                        <td>{item.owner}</td>
+                        <td>{formatBytes(Number(item.size_bytes))}</td>
+                        <td className={styles.connectionCell}>
+                          {item.credential_available ? (
+                            <>
+                              <button
+                                type="button"
+                                className={styles.smallButton}
+                                disabled={busy}
+                                onClick={() => toggleConnection(item)}
+                              >
+                                {revealed ? "Hide URL" : "Show URL"}
+                              </button>
+                              {revealed && (
+                                <div className={styles.inlineSecret}>
+                                  <code>{revealed.url}</code>
+                                  <button type="button" className={styles.smallButton} onClick={() => navigator.clipboard.writeText(revealed.url)}>Copy</button>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className={styles.muted}>
+                              {RESERVED_ROLES.has(item.owner) ? "System database" : "Password unavailable — rotate once"}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
