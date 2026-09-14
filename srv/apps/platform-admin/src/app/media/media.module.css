@@ -1,0 +1,443 @@
+.page {
+  min-height: 100vh;
+  background: #0b0f14;
+  color: #e8edf2;
+  padding: 32px;
+}
+
+.shell {
+  width: min(1280px, 100%);
+  margin: 0 auto;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.topbar h1 {
+  margin: 8px 0;
+  font-size: 32px;
+}
+
+.topbar p,
+.createPanel p,
+.sectionHeader p,
+.secretPanel p,
+.note {
+  color: #94a3b8;
+}
+
+.back {
+  color: #8ab4ff;
+  font-size: 14px;
+}
+
+.actions,
+.userActions,
+.secretActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.status {
+  border: 1px solid #263341;
+  background: #111821;
+  color: #b8c4cf;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.page button {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #e8edf2;
+  color: #0b0f14;
+}
+
+.page button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: #243140 !important;
+  color: #d5dde5 !important;
+}
+
+.danger {
+  background: #ef4444 !important;
+  color: white !important;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.summaryGrid article {
+  border: 1px solid #202b36;
+  background: #111821;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.summaryGrid span,
+.usageGrid span,
+.quotaRow label span,
+.createFields label span {
+  color: #94a3b8;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summaryGrid strong {
+  font-size: 20px;
+}
+
+.summaryGrid small,
+.usageGrid small,
+.quotaRow small {
+  color: #82909e;
+}
+
+.bar {
+  height: 7px;
+  background: #1b2631;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: #60a5fa;
+  border-radius: inherit;
+}
+
+.createPanel,
+.usersPanel,
+.filesPanel,
+.secretPanel {
+  border: 1px solid #202b36;
+  background: #111821;
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.createPanel {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 18px;
+}
+
+.createPanel h2,
+.usersPanel h2,
+.filesPanel h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.createPanel p,
+.sectionHeader p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.createFields {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+  min-width: min(620px, 60%);
+}
+
+.createFields label,
+.quotaRow label {
+  display: grid;
+  gap: 6px;
+}
+
+.page input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #314151;
+  border-radius: 8px;
+  background: #0a1118;
+  color: #e8edf2;
+  padding: 10px 11px;
+  outline: none;
+}
+
+.page input:focus {
+  border-color: #60a5fa;
+}
+
+.secretPanel {
+  border-color: #27573a;
+  background: #0f1c15;
+  display: grid;
+  gap: 10px;
+}
+
+.secretPanel strong {
+  color: #bbf7d0;
+}
+
+.secretPanel p {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.secretPanel code {
+  display: block;
+  padding: 12px;
+  border: 1px solid #27573a;
+  border-radius: 8px;
+  background: #09110d;
+  overflow-wrap: anywhere;
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.userList {
+  display: grid;
+  gap: 12px;
+}
+
+.userCard {
+  border: 1px solid #202b36;
+  background: #0e151d;
+  border-radius: 11px;
+  padding: 14px;
+}
+
+.userHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #202b36;
+}
+
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.titleLine h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.userHeader code {
+  display: block;
+  margin-top: 6px;
+  color: #8fa0af;
+  font-size: 12px;
+}
+
+.active,
+.disabled {
+  display: inline-flex;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.active {
+  background: rgba(34, 197, 94, 0.12);
+  color: #bbf7d0;
+}
+
+.disabled {
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+}
+
+.usageGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.usageGrid > div {
+  border: 1px solid #1d2833;
+  background: #0b1118;
+  border-radius: 9px;
+  padding: 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.usageGrid strong {
+  font-size: 16px;
+}
+
+.quotaRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) auto 1fr;
+  gap: 10px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.quotaRow small {
+  align-self: center;
+  text-align: right;
+}
+
+.fileTable {
+  display: grid;
+  border: 1px solid #202b36;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.fileHead,
+.fileRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) 1.2fr 0.8fr 1fr 1.2fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+.fileHead {
+  background: #0b1118;
+  color: #94a3b8;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.fileRow {
+  border-top: 1px solid #202b36;
+  min-width: 0;
+}
+
+.fileRow > div,
+.fileRow > span {
+  min-width: 0;
+}
+
+.fileRow strong,
+.fileRow code,
+.fileRow small,
+.fileRow a {
+  display: block;
+}
+
+.fileRow strong {
+  overflow-wrap: anywhere;
+}
+
+.fileRow code,
+.fileRow small {
+  margin-top: 4px;
+  color: #82909e;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.fileRow a {
+  margin-top: 4px;
+  color: #8ab4ff;
+  font-size: 12px;
+}
+
+.empty {
+  color: #94a3b8;
+  text-align: center;
+  padding: 24px;
+}
+
+.note {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.page code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@media (max-width: 1050px) {
+  .summaryGrid,
+  .usageGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .createPanel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .createFields {
+    min-width: 0;
+  }
+
+  .fileHead {
+    display: none;
+  }
+
+  .fileRow {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .page {
+    padding: 24px 14px;
+  }
+
+  .topbar,
+  .userHeader {
+    flex-direction: column;
+  }
+
+  .actions,
+  .userActions {
+    justify-content: flex-start;
+  }
+
+  .summaryGrid,
+  .usageGrid,
+  .createFields,
+  .quotaRow,
+  .fileRow {
+    grid-template-columns: 1fr;
+  }
+
+  .quotaRow small {
+    text-align: left;
+  }
+}
