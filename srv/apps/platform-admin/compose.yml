@@ -9,8 +9,20 @@ services:
       NODE_ENV: production
       HOSTNAME: 0.0.0.0
       PORT: 3000
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: postgres
+      PGUSER: platform_controller
+      PG_PASSWORD_FILE: /run/secrets/platform_controller_password
     ports:
       - "127.0.0.1:${PLATFORM_ADMIN_PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: /srv/infrastructure/databases/postgres/secrets/platform_controller_password
+        target: /run/secrets/platform_controller_password
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test:
         [
