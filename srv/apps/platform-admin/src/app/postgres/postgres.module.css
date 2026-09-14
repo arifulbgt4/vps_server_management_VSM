@@ -128,25 +128,25 @@
   overflow-x: auto;
 }
 
-table {
+.tableWrap table {
   width: 100%;
   border-collapse: collapse;
   font-size: 14px;
 }
 
-th,
-td {
+.tableWrap th,
+.tableWrap td {
   text-align: left;
   border-bottom: 1px solid #202b36;
   padding: 10px 8px;
 }
 
-th {
+.tableWrap th {
   color: #9aa7b3;
   font-weight: 500;
 }
 
-code {
+.page code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
