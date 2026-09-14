@@ -51,16 +51,23 @@ async function getClient() {
   return client;
 }
 
-function privateConnection(username: string, password: string) {
+function connections(username: string, password: string) {
   const host = process.env.REDIS_APP_HOST || "redis";
   const port = Number(process.env.REDIS_APP_PORT || 6379);
   const database = Number(process.env.REDIS_APP_DATABASE || 0);
+  const publicHost = process.env.REDIS_PUBLIC_HOST?.trim();
+  const publicPort = Number(process.env.REDIS_PUBLIC_PORT || 6380);
 
   return {
     host,
     port,
     database,
     url: `redis://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${database}`,
+    public_host: publicHost || null,
+    public_port: publicHost ? publicPort : null,
+    public_url: publicHost
+      ? `rediss://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${publicHost}:${publicPort}/${database}`
+      : null,
   };
 }
 
@@ -94,6 +101,8 @@ export async function listRedisResources() {
     })),
     app_host: process.env.REDIS_APP_HOST || "redis",
     app_port: Number(process.env.REDIS_APP_PORT || 6379),
+    public_host: process.env.REDIS_PUBLIC_HOST || null,
+    public_port: Number(process.env.REDIS_PUBLIC_PORT || 6380),
   };
 }
 
@@ -129,7 +138,7 @@ export async function createRedisUser(usernameInput: unknown) {
   return {
     username,
     password,
-    connection: privateConnection(username, password),
+    connection: connections(username, password),
   };
 }
 
@@ -154,7 +163,7 @@ export async function rotateRedisPassword(usernameInput: unknown) {
     username,
     password,
     credential_stored: credentialStored,
-    connection: privateConnection(username, password),
+    connection: connections(username, password),
   };
 }
 
@@ -170,7 +179,7 @@ export async function getRedisConnection(usernameInput: unknown) {
   return {
     username,
     password,
-    connection: privateConnection(username, password),
+    connection: connections(username, password),
   };
 }
 
