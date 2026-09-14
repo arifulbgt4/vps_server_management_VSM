@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { isAuthenticated } from "@/lib/auth";
+import SignOutButton from "./SignOutButton";
 import styles from "./page.module.css";
 
 const modules = [
@@ -21,7 +22,10 @@ export default async function Home() {
             <h1>Platform Admin</h1>
             <p className={styles.subtitle}>Minimal control panel for independently managed VPS services.</p>
           </div>
-          <div className={styles.status}><span className={styles.statusDot} />Authenticated</div>
+          <div className={styles.headerActions}>
+            <div className={styles.status}><span className={styles.statusDot} />Authenticated</div>
+            <SignOutButton />
+          </div>
         </header>
 
         <section className={styles.panel}>
