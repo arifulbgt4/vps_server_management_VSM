@@ -1,48 +1,44 @@
 # Production VPS Setup and Operations Guide
 
-This is the authoritative operations document for the VSM repository. It records the current single-VPS architecture, security boundaries, deployment procedures, database integrations, n8n queue mode, Media Storage, Docker management, verification and scaling policy.
+This is the authoritative operations guide for the VSM repository. It distinguishes tracked code from services that have actually been deployed and verified on the VPS.
 
-> Never commit real passwords, private keys, bearer tokens, API keys, database controller credentials, MongoDB keyfiles or encryption keys.
+> Never commit passwords, private keys, bearer tokens, database controller credentials, MongoDB keyfiles, n8n encryption keys, or credential-vault keys.
 >
-> Documentation uses `example.com` placeholders. Runtime production configuration may use the real domains.
+> Documentation uses `example.com` placeholders. Real production domains belong only in runtime configuration.
 
-## 1. Deployment model
+## 1. Architecture
 
-The host is an Ubuntu 24.04 LTS VPS running Docker Engine, Docker Compose, host Nginx and Certbot.
-
-Already deployed/verified services should be distinguished from code that is merely present in Git. Repository code for MySQL and MongoDB is complete, but each service is considered deployed only after its runtime directories/secrets/networks are created on the VPS and health checks pass.
-
-Core architecture:
+The host is a single Ubuntu 24.04 LTS VPS running Docker Engine, Docker Compose, host Nginx and Certbot.
 
 ```text
 Internet
    |
 Host Nginx
-   |---------------------------|---------------------------|
-   v                           v                           v
-Platform Admin              n8n main                 Media Service
-127.0.0.1:3000              127.0.0.1:5678          127.0.0.1:8082
-                                |
-                                v
-                           Redis queue
-                                |
-                                v
-                           n8n-worker
+   |------------------------|------------------------|
+   v                        v                        v
+Platform Admin           n8n main              Media Service
+127.0.0.1:3000           127.0.0.1:5678       127.0.0.1:8082
+                             |
+                             v
+                        Redis queue
+                             |
+                             v
+                        n8n-worker
 
-Private infrastructure networks:
-  postgres_net -> PostgreSQL alias postgres:5432
-  redis_net    -> Redis alias redis:6379
-  mysql_net    -> MySQL alias mysql:3306
-  mongo_net    -> MongoDB alias mongodb:27017
-  media_net    -> Media alias media-service:8080
+Private Docker infrastructure:
+  postgres_net  -> postgres:5432
+  redis_net     -> redis:6379
+  mysql_net     -> mysql:3306
+  mongo_net     -> mongodb:27017
+  media_net     -> media-service:8080
   management_net -> Platform Admin <-> Docker agent
 ```
 
-A separate HTTP load balancer is not required while only one HTTP-facing instance of each application exists on this VPS.
+Repository code for MySQL and MongoDB is implemented. They are not considered live production services until their VPS deployment and runtime acceptance checks pass.
 
-## 2. Public ports
+## 2. Network exposure
 
-Intentionally exposed ports:
+Intentionally public ports:
 
 ```text
 22/tcp    SSH
@@ -55,19 +51,19 @@ Intentionally exposed ports:
 Private/loopback-only ports:
 
 ```text
-3000    Platform Admin, loopback only
-5678    n8n main, loopback only
-5678    n8n worker health endpoint, Docker-internal only
-6379    Redis plaintext, Docker-private
-3306    MySQL, Docker-private
-27017   MongoDB, Docker-private
-8080    Media Service container port, Docker-private
-8082    Media Service host binding, loopback only
+3000    Platform Admin loopback
+5678    n8n main loopback
+5678    n8n-worker health Docker-internal
+6379    Redis Docker-private
+3306    MySQL Docker-private
+27017   MongoDB Docker-private
+8080    Media Service Docker-private
+8082    Media Service loopback
 ```
 
-Do not add public firewall rules for MySQL `3306` or MongoDB `27017` in the private-first deployment.
+Do not add public firewall rules for MySQL `3306` or MongoDB `27017` in the private-first design.
 
-## 3. Runtime filesystem layout
+## 3. Filesystem layout
 
 ```text
 /srv/
@@ -76,26 +72,20 @@ Do not add public firewall rules for MySQL `3306` or MongoDB `27017` in the priv
 │   │   ├── postgres/
 │   │   ├── mysql/
 │   │   └── mongodb/
-│   ├── cache/
-│   │   └── redis/
-│   ├── management/
-│   │   └── docker-agent/
-│   ├── networking/
-│   ├── proxy/
-│   └── monitoring/
-├── apps/
-│   ├── platform-admin/
-│   ├── n8n/
-│   └── media-service/
-├── mail/
-└── backups/
+│   ├── cache/redis/
+│   ├── management/docker-agent/
+│   └── networking/
+└── apps/
+    ├── platform-admin/
+    ├── n8n/
+    └── media-service/
 ```
 
-Persistent data must remain outside disposable container layers.
+Persistent data and secrets live outside disposable container layers.
 
-## 4. Base hardening
+## 4. Host security
 
-Required SSH policy:
+SSH policy:
 
 ```text
 PermitRootLogin no
@@ -113,25 +103,9 @@ sudo apt install -y \
   ufw fail2ban nginx certbot python3-certbot-nginx quota rsync
 ```
 
-Enable Fail2ban and set timezone:
+Host UFW exposes only SSH/HTTP/HTTPS. PostgreSQL/Redis public database ports are additionally controlled by provider firewall and the Docker-aware `DOCKER-USER` policy.
 
-```bash
-sudo systemctl enable --now fail2ban
-sudo timedatectl set-timezone Asia/Dhaka
-```
-
-## 5. Firewall policy
-
-Host UFW:
-
-```bash
-sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-```
-
-Provider/network firewall allows only the required public ports before the final DROP rule:
+Expected provider rules before final DROP:
 
 ```text
 22
@@ -141,28 +115,22 @@ Provider/network firewall allows only the required public ports before the final
 6380
 ```
 
-Docker-published ports can bypass ordinary UFW INPUT handling. The deployment therefore also uses the tracked `DOCKER-USER` policy:
-
-```text
-srv/infrastructure/networking/postgres-public/docker-firewall.sh
-```
-
-Expected logic:
-
-```text
-ACCEPT RELATED,ESTABLISHED
-ACCEPT original destination 5432
-ACCEPT original destination 6380
-DROP   other NEW traffic entering from the external interface
-```
-
-Verify:
+Verify Docker-aware policy:
 
 ```bash
 sudo iptables -nvL DOCKER-USER --line-numbers
 ```
 
-## 6. External Docker networks
+Expected logical policy:
+
+```text
+ACCEPT RELATED,ESTABLISHED
+ACCEPT original destination 5432
+ACCEPT original destination 6380
+DROP   other NEW public Docker-forwarded traffic
+```
+
+## 5. External Docker networks
 
 Create once:
 
@@ -176,25 +144,11 @@ docker network inspect management_net >/dev/null 2>&1 || docker network create m
 docker network inspect media_net >/dev/null 2>&1 || docker network create media_net
 ```
 
-Same-VPS applications should use these private aliases instead of public database domains whenever possible.
+Same-VPS applications should use private Docker aliases instead of public database endpoints wherever possible.
 
-## 7. Nginx / HTTPS
+## 6. Platform Admin 1.0.0
 
-Host Nginx terminates HTTPS for HTTP-facing applications:
-
-```text
-admin.example.com -> 127.0.0.1:3000
-n8n.example.com   -> 127.0.0.1:5678
-media.example.com -> 127.0.0.1:8082
-```
-
-PostgreSQL and public Redis TLS are not HTTP reverse-proxy workloads.
-
-MySQL and MongoDB have no public Nginx endpoint in the initial integration.
-
-## 8. Platform Admin 1.0.0
-
-Runtime:
+Tracked runtime path:
 
 ```text
 /srv/apps/platform-admin
@@ -203,116 +157,79 @@ Runtime:
 Modules:
 
 ```text
-/postgres   PostgreSQL management
-/mysql      MySQL management
-/mongodb    MongoDB management
-/redis      Redis ACL management
-/docker     Docker metrics/lifecycle/resource limits
-/media      Media users/quotas/keys/files
+/postgres
+/mysql
+/mongodb
+/redis
+/docker
+/media
 ```
 
-The credential vault uses AES-256-GCM and stores encrypted recoverable application credentials in the `platform_admin` PostgreSQL database.
+The credential vault encrypts recoverable application credentials with AES-256-GCM. Database root/bootstrap credentials never go to browser code and are not mounted into Platform Admin.
 
-Database root/bootstrap credentials are deliberately not exposed to the browser and are not mounted into Platform Admin.
+Platform Admin does not mount `docker.sock`; Docker control remains isolated behind `platform-docker-agent`.
 
-Platform Admin itself never mounts `docker.sock`.
+## 7. PostgreSQL
 
-## 9. PostgreSQL
-
-Container:
+Existing service:
 
 ```text
-platform-postgres
+container: platform-postgres
+private:   postgres:5432
+public:    db.example.com:5432 with TLS/SCRAM
 ```
 
-Private endpoint:
-
-```text
-postgres:5432
-```
-
-Public TLS format:
+Public URL:
 
 ```text
 postgresql://USER:PASSWORD@db.example.com:5432/DATABASE?sslmode=verify-full
 ```
 
-Management identities:
+Applications use dedicated unprivileged roles.
+
+## 8. Redis
+
+Existing service:
 
 ```text
-postgres             emergency/local superuser
-platform_controller  management role, not superuser
-platform_app         unprivileged Platform Admin database owner
+container: platform-redis
+private:   redis:6379
+public:    redis.example.com:6380 TLS
 ```
 
-Application roles remain unprivileged.
+The default Redis user is disabled. Applications use dedicated ACL identities. n8n queue mode uses its own user such as `n8n_queue` and DB index `1`.
 
-## 10. Redis
+## 9. MySQL integration
 
-Container:
+Tracked files:
 
 ```text
-platform-redis
+srv/infrastructure/databases/mysql/compose.yml
+srv/infrastructure/databases/mysql/.env.example
+srv/infrastructure/databases/mysql/scripts/init-controller.sh
+srv/infrastructure/databases/mysql/README.md
 ```
 
-Endpoints:
+Target service:
 
 ```text
-redis:6379                     private Docker plaintext
-redis.example.com:6380         public TLS
+container: platform-mysql
+alias:     mysql
+port:      3306 private only
+image:     mysql:8.4 by default
 ```
-
-`default` is disabled. `platform_controller` is management-only. Applications use dedicated ACL identities.
-
-n8n queue uses a dedicated user such as `n8n_queue` and Redis DB index `1`.
-
-## 11. MySQL integration
-
-Tracked stack:
-
-```text
-srv/infrastructure/databases/mysql/
-```
-
-Container and alias:
-
-```text
-platform-mysql
-mysql:3306
-```
-
-Port `3306` is not host-published.
 
 Identity model:
 
 ```text
-root                 bootstrap/emergency only
+root                 localhost/bootstrap/emergency only
 platform_controller  Platform Admin management only
-app users             database-scoped runtime identities
+application users    database-scoped runtime identities
 ```
 
-Platform Admin `/mysql` supports:
+`MYSQL_ROOT_HOST=localhost` prevents a persistent remote root account. `platform_controller` is created during the official image's first `/var/lib/mysql` initialization through `/docker-entrypoint-initdb.d/20-platform-controller.sh`. There is no MySQL bootstrap sidecar.
 
-```text
-list databases and sizes
-list users
-create database + new application user
-create database using an existing application user
-rotate passwords
-delete database only
-delete database + user
-reveal private URL from encrypted credential vault
-```
-
-Private connection format:
-
-```text
-mysql://USER:PASSWORD@mysql:3306/DATABASE
-```
-
-### Deploy MySQL
-
-Copy tracked code without overwriting runtime state:
+### Deploy MySQL code
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -336,22 +253,18 @@ mkdir -p data backups secrets
 chmod 600 .env
 
 docker network inspect mysql_net >/dev/null 2>&1 || docker network create mysql_net
-```
 
-Create secrets only if they do not already exist:
-
-```bash
 [ -f secrets/root_password ] || openssl rand -hex 32 > secrets/root_password
 [ -f secrets/controller_password ] || openssl rand -hex 32 > secrets/controller_password
 
-sudo chown root:root secrets/root_password
-sudo chmod 600 secrets/root_password
-sudo chown 1001:1001 secrets/controller_password
-sudo chmod 600 secrets/controller_password
+sudo chown 999:999 secrets/root_password secrets/controller_password
+sudo chmod 600 secrets/root_password secrets/controller_password
 sudo chown -R 999:999 data
 ```
 
-Start and verify:
+UID/GID `999` is the expected database user for the tracked official image family; verify it when changing image families.
+
+Start:
 
 ```bash
 docker compose config
@@ -359,50 +272,60 @@ docker compose pull
 docker compose up -d
 docker compose ps
 docker logs platform-mysql --tail 100
-docker logs platform-mysql-init --tail 100
 ```
 
-The `platform-mysql-init` container is expected to finish successfully and exit after creating/rotating the controller account.
+On a brand-new data directory, logs should include the controller initialization message. Ordinary restarts do not rerun `/docker-entrypoint-initdb.d` scripts.
 
-## 12. MongoDB integration
+### Install Platform Admin MySQL secret copy
 
-Tracked stack:
+```bash
+sudo install \
+  -o 1001 -g 1001 -m 0600 \
+  /srv/infrastructure/databases/mysql/secrets/controller_password \
+  /srv/apps/platform-admin/secrets/mysql_controller_password
+```
+
+`/mysql` then manages database/user creation, existing-user assignments, password rotation, encrypted URL reveal and deletion. Database+user deletion is blocked when that user still owns grants on another managed database.
+
+Private app URL:
 
 ```text
-srv/infrastructure/databases/mongodb/
+mysql://USER:PASSWORD@mysql:3306/DATABASE
 ```
 
-Container/alias/replica:
+## 10. MongoDB integration
+
+Tracked files:
 
 ```text
-platform-mongodb
-mongodb:27017
-rs0
+srv/infrastructure/databases/mongodb/compose.yml
+srv/infrastructure/databases/mongodb/.env.example
+srv/infrastructure/databases/mongodb/config/mongod.conf
+srv/infrastructure/databases/mongodb/scripts/init-replica.sh
+srv/infrastructure/databases/mongodb/README.md
 ```
 
-Port `27017` is not host-published.
+Target service:
 
-MongoDB uses a single-node replica set from day one so transactions/change streams work and future replica expansion does not require converting from standalone mode.
+```text
+container:   platform-mongodb
+alias:       mongodb
+port:        27017 private only
+replica set: rs0
+image:       mongo:8.0 by default
+```
 
 Identity model:
 
 ```text
 root                 bootstrap/emergency only
 platform_controller  Platform Admin management only
-app users             readWrite on their own database
+application users    readWrite on their own database
 ```
 
-Platform Admin `/mongodb` supports database/user creation, password rotation, encrypted connection reveal, database size listing and deletion.
+MongoDB starts with authorization, a persistent replica-set keyfile and `rs0`. A one-shot `platform-mongodb-init` sidecar initiates `rs0` if needed, waits for PRIMARY state, creates/rotates `platform_controller`, then exits.
 
-Private connection format:
-
-```text
-mongodb://USER:PASSWORD@mongodb:27017/DATABASE?authSource=DATABASE&replicaSet=rs0
-```
-
-### Deploy MongoDB
-
-Copy tracked code:
+### Deploy MongoDB code
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -426,25 +349,20 @@ mkdir -p data backups secrets
 chmod 600 .env
 
 docker network inspect mongo_net >/dev/null 2>&1 || docker network create mongo_net
-```
 
-Create persistent secrets once:
-
-```bash
 [ -f secrets/root_password ] || openssl rand -hex 32 > secrets/root_password
 [ -f secrets/controller_password ] || openssl rand -hex 32 > secrets/controller_password
 [ -f secrets/replica_keyfile ] || openssl rand -hex 64 > secrets/replica_keyfile
 
-sudo chown root:root secrets/root_password
+sudo chown 999:999 secrets/root_password secrets/replica_keyfile
 sudo chmod 600 secrets/root_password
-sudo chown 1001:1001 secrets/controller_password
-sudo chmod 600 secrets/controller_password
-sudo chown 999:999 secrets/replica_keyfile
 sudo chmod 400 secrets/replica_keyfile
+sudo chown root:root secrets/controller_password
+sudo chmod 600 secrets/controller_password
 sudo chown -R 999:999 data
 ```
 
-Start and verify:
+Start:
 
 ```bash
 docker compose config
@@ -455,97 +373,28 @@ docker logs platform-mongodb --tail 100
 docker logs platform-mongodb-init --tail 100
 ```
 
-The one-shot initializer should initiate `rs0`, wait for PRIMARY state and create/rotate the controller account.
+Expected bootstrap sidecar result: exited successfully after `rs0` is PRIMARY and the controller exists.
 
-Never regenerate the replica keyfile on a live replica set without a reviewed key rotation procedure.
+### Install Platform Admin MongoDB secret copy
 
-## 13. n8n queue mode
-
-Containers:
-
-```text
-n8n          editor/API/webhook process
-n8n-worker   execution worker
+```bash
+sudo install \
+  -o 1001 -g 1001 -m 0600 \
+  /srv/infrastructure/databases/mongodb/secrets/controller_password \
+  /srv/apps/platform-admin/secrets/mongo_controller_password
 ```
 
-Queue settings:
+Private application URL:
 
 ```text
-EXECUTIONS_MODE=queue
-OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
-QUEUE_BULL_REDIS_HOST=redis
-QUEUE_BULL_REDIS_PORT=6379
-QUEUE_BULL_REDIS_USERNAME=n8n_queue
-QUEUE_BULL_REDIS_DB=1
-QUEUE_BULL_PREFIX=n8n
-N8N_DEFAULT_BINARY_DATA_MODE=database
+mongodb://USER:PASSWORD@mongodb:27017/DATABASE?authSource=DATABASE&replicaSet=rs0
 ```
 
-Initial worker concurrency is `5`.
+Never regenerate `replica_keyfile` on a live replica set without a reviewed key-rotation procedure.
 
-Both main and worker are tracked on:
+## 11. Rebuild Platform Admin
 
-```text
-postgres_net
-redis_net
-mysql_net
-mongo_net
-media_net
-```
-
-This does not mean n8n runtime data moved to MySQL/MongoDB. n8n itself continues using PostgreSQL; the additional networks allow workflow nodes to reach application databases privately.
-
-## 14. Media Storage
-
-Container:
-
-```text
-platform-media
-```
-
-Bindings:
-
-```text
-127.0.0.1:8082 -> 8080
-media-service:8080 on media_net
-```
-
-Physical files live under:
-
-```text
-/srv/apps/media-service/storage
-```
-
-Metadata/quota ownership lives in its PostgreSQL database. The Media Service stores API-key hashes; Platform Admin may keep encrypted copies for authenticated reveal.
-
-## 15. Docker control agent
-
-Container:
-
-```text
-platform-docker-agent
-```
-
-Default managed allowlist:
-
-```text
-platform-admin
-platform-postgres
-platform-redis
-platform-mysql
-platform-mongodb
-n8n
-n8n-worker
-platform-media
-```
-
-Bootstrap containers `platform-mysql-init` and `platform-mongodb-init` are intentionally excluded.
-
-If `/srv/infrastructure/management/docker-agent/.env` explicitly overrides `DOCKER_AGENT_ALLOWLIST`, update that runtime override too; Compose defaults do not replace an explicit `.env` value.
-
-## 16. Apply Platform Admin integration
-
-After MySQL and MongoDB runtime secret files exist, update Platform Admin safely:
+Create both private controller-secret copies before rebuilding Platform Admin, because its compose file requires them.
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -575,7 +424,31 @@ Expected authenticated pages:
 /media
 ```
 
-## 17. Apply n8n network integration
+## 12. n8n queue and database-network integration
+
+n8n itself continues to use PostgreSQL for persistent runtime data. MySQL and MongoDB are additional private workflow targets, not replacements for n8n's runtime database.
+
+Tracked n8n networks:
+
+```text
+postgres_net
+redis_net
+mysql_net
+mongo_net
+media_net
+```
+
+Queue mode remains:
+
+```text
+EXECUTIONS_MODE=queue
+OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+QUEUE_BULL_REDIS_HOST=redis
+QUEUE_BULL_REDIS_DB=1
+N8N_DEFAULT_BINARY_DATA_MODE=database
+```
+
+Safe sync/recreate:
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -593,14 +466,81 @@ docker compose up -d --force-recreate
 docker compose ps
 ```
 
-Expected Redis/network members can be inspected with:
+Private TCP checks:
 
 ```bash
-docker network inspect mysql_net --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
-docker network inspect mongo_net --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
+docker exec n8n node -e "require('net').connect(3306,'mysql').on('connect',function(){console.log('mysql tcp ok');this.end()}).on('error',e=>{console.error(e);process.exit(1)})"
+
+docker exec n8n node -e "require('net').connect(27017,'mongodb').on('connect',function(){console.log('mongodb tcp ok');this.end()}).on('error',e=>{console.error(e);process.exit(1)})"
 ```
 
-After full integration, expected long-running members include:
+Workflows must use application credentials generated in `/mysql` or `/mongodb`, never controller/root identities.
+
+## 13. Media Storage
+
+Existing service:
+
+```text
+container: platform-media
+private:   media-service:8080
+host:      127.0.0.1:8082
+```
+
+Physical files live under `/srv/apps/media-service/storage`; metadata/quota ownership lives in PostgreSQL. Media user API keys are hashed in Media Service, while Platform Admin can retain encrypted reveal copies.
+
+## 14. Docker control agent
+
+Default long-running allowlist:
+
+```text
+platform-admin
+platform-postgres
+platform-redis
+platform-mysql
+platform-mongodb
+n8n
+n8n-worker
+platform-media
+```
+
+`platform-mongodb-init` is intentionally excluded. MySQL has no bootstrap sidecar.
+
+If `/srv/infrastructure/management/docker-agent/.env` explicitly overrides `DOCKER_AGENT_ALLOWLIST`, update that runtime override as well.
+
+Apply tracked compose changes:
+
+```bash
+cd /tmp/vps_server_management_VSM
+git pull
+cp srv/infrastructure/management/docker-agent/compose.yml \
+  /srv/infrastructure/management/docker-agent/compose.yml
+
+cd /srv/infrastructure/management/docker-agent
+docker compose up -d --force-recreate
+docker logs platform-docker-agent --tail 100
+```
+
+## 15. Verification
+
+```bash
+# database containers
+docker compose -f /srv/infrastructure/databases/mysql/compose.yml ps
+docker compose -f /srv/infrastructure/databases/mongodb/compose.yml ps
+
+# application containers
+docker compose -f /srv/apps/platform-admin/compose.yml ps
+docker compose -f /srv/apps/n8n/compose.yml ps
+
+# networks
+docker network inspect mysql_net --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
+docker network inspect mongo_net --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
+
+# no public DB publication
+docker port platform-mysql
+docker port platform-mongodb
+```
+
+Expected long-running members after full integration:
 
 ```text
 mysql_net:
@@ -616,76 +556,43 @@ mongo_net:
   n8n-worker
 ```
 
-## 18. Private connectivity verification
+`docker port platform-mysql` and `docker port platform-mongodb` should show no host-published database port.
 
-From n8n:
-
-```bash
-docker exec n8n node -e "require('net').connect(3306,'mysql').on('connect',function(){console.log('mysql tcp ok');this.end()}).on('error',e=>{console.error(e);process.exit(1)})"
-
-docker exec n8n node -e "require('net').connect(27017,'mongodb').on('connect',function(){console.log('mongodb tcp ok');this.end()}).on('error',e=>{console.error(e);process.exit(1)})"
-```
-
-From Platform Admin the `/mysql` and `/mongodb` pages should load without connection errors.
-
-## 19. Docker-agent update
-
-```bash
-cd /tmp/vps_server_management_VSM
-git pull
-cp srv/infrastructure/management/docker-agent/compose.yml \
-  /srv/infrastructure/management/docker-agent/compose.yml
-cp srv/infrastructure/management/docker-agent/agent.mjs \
-  /srv/infrastructure/management/docker-agent/agent.mjs
-
-cd /srv/infrastructure/management/docker-agent
-docker compose up -d --force-recreate
-docker logs platform-docker-agent --tail 100
-```
-
-Then `/docker` can manage `platform-mysql` and `platform-mongodb` after the containers exist.
-
-## 20. Backup / recovery
+## 16. Backup/recovery
 
 Critical state includes:
 
 ```text
 PostgreSQL databases
 Redis /data
-MySQL /var/lib/mysql data + logical dumps
-MongoDB /data/db + logical dumps + replica_keyfile
-/srv/apps/n8n/data
-/srv/apps/n8n/secrets/encryption_key
-/srv/apps/media-service/storage
-Platform Admin credential_vault_key
-all runtime secret files required to authenticate restored services
+MySQL /var/lib/mysql + logical dumps + service secrets
+MongoDB /data/db + logical dumps + root/controller/keyfile secrets
+n8n data + persistent N8N_ENCRYPTION_KEY
+Media Storage files + media database
+Platform Admin credential_vault_key + app-local controller copies
 ```
 
-A database backup is not validated until an actual restore test succeeds.
+A backup policy is not production-ready until an actual restore test succeeds.
 
-MySQL should use `mysqldump`/equivalent consistent backup procedures. MongoDB should use `mongodump --archive --gzip`/`mongorestore` or a reviewed filesystem snapshot process.
+MySQL: use a consistent `mysqldump`/restore procedure.
+MongoDB: use `mongodump --archive --gzip` / `mongorestore` or a reviewed consistent snapshot procedure.
 
-Do not restore an n8n database without the matching persistent `N8N_ENCRYPTION_KEY`.
+## 17. Storage-limit status
 
-## 21. Resource management
+CPU/RAM resource limits are managed through `/docker`.
 
-Platform Admin `/docker` currently controls CPU and RAM limits through the private Docker agent.
+Hard per-service persistent-storage quotas are **not currently active**. The root ext4 filesystem does not have project quota enabled. Do not claim storage limits exist until a dedicated quota-capable filesystem or another reviewed storage-quota design is deployed.
 
-Persistent storage quotas are a separate filesystem concern. The current root filesystem is ext4 without project quota enabled, so hard per-directory service storage quotas must not be claimed as active until a dedicated quota-capable filesystem or another reviewed quota design is deployed.
+## 18. Scaling/load balancing
 
-## 22. Scaling and load balancing
+n8n execution scales first through Redis workers. Redis distributes execution jobs; no HTTP load balancer is needed for worker distribution.
 
-Scale n8n execution first through worker concurrency/additional workers. Redis distributes execution jobs; no HTTP load balancer is needed for worker distribution.
+Introduce HTTP load balancing only after multiple HTTP-facing instances exist. A load balancer on the same single VPS does not remove the VPS as a single point of failure.
 
-Introduce HTTP load balancing only after multiple HTTP-facing instances exist. Introduce an external/cloud load balancer and multi-node database architecture only when moving to multiple VPS nodes/high availability.
-
-The current single VPS remains a single point of failure.
-
-## 23. Security invariants
+## 19. Security invariants
 
 ```text
-No root SSH login.
-No password SSH login.
+No root/password SSH login.
 Platform Admin 3000 stays loopback-only.
 n8n main 5678 stays loopback-only.
 n8n-worker publishes no host port.
@@ -693,38 +600,36 @@ Media 8082 stays loopback-only.
 Redis 6379 stays Docker-private.
 MySQL 3306 stays Docker-private.
 MongoDB 27017 stays Docker-private.
-PostgreSQL public clients use TLS/SCRAM and sslmode=verify-full.
-Redis public clients use TLS on 6380.
+MySQL remote root is not created.
 Database root/bootstrap credentials are never used by applications.
-Platform Admin receives controller credentials only.
-n8n workflows receive application-scoped database credentials only.
-MongoDB replica keyfile remains persistent and private.
+Platform Admin receives only private controller-secret copies.
+n8n workflows use application-scoped database credentials.
+MongoDB replica keyfile remains persistent/private.
 Platform Admin never mounts docker.sock.
-Docker lifecycle control remains behind the private allowlisted agent.
-Main and worker share the same persistent n8n encryption key.
-Media admin API remains private and token-protected.
 Secrets are never committed to Git.
 DOCKER-USER blocks unapproved public Docker-published ports.
 ```
 
-## 24. Runtime acceptance checklist
+## 20. Runtime acceptance checklist
 
-Do not mark MySQL/MongoDB integration complete on the VPS until all of these pass:
+Do not mark the new database integrations deployed until all relevant checks pass:
 
 ```text
 platform-mysql healthy
-platform-mysql-init exited 0
+/mysql loads and can create/rotate/delete a test application DB/user
 platform-mongodb healthy
 platform-mongodb-init exited 0
-Platform Admin rebuild healthy
-/mysql loads
-/mongodb loads
+rs0 has one writable PRIMARY
+/mongodb loads and can create/rotate/delete a test application DB/user
+Platform Admin healthy after rebuild
 n8n healthy
 n8n-worker healthy
-n8n -> mysql:3306 TCP succeeds
-n8n -> mongodb:27017 TCP succeeds
+n8n -> mysql:3306 succeeds
+n8n -> mongodb:27017 succeeds
 platform-mysql appears in /docker
 platform-mongodb appears in /docker
-3306 is not publicly published
-27017 is not publicly published
+3306 has no host publication
+27017 has no host publication
+MySQL restore test succeeds
+MongoDB restore test succeeds
 ```
