@@ -1,0 +1,53 @@
+services:
+  docker-agent:
+    image: node:22-alpine
+    container_name: platform-docker-agent
+    restart: unless-stopped
+    command: ["node", "/app/agent.mjs"]
+    environment:
+      PORT: 8080
+      DOCKER_AGENT_TOKEN_FILE: /run/secrets/control_token
+      DOCKER_AGENT_ALLOWLIST: ${DOCKER_AGENT_ALLOWLIST:-platform-admin,platform-postgres,platform-redis}
+    volumes:
+      - type: bind
+        source: ./agent.mjs
+        target: /app/agent.mjs
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: ./secrets/control_token
+        target: /run/secrets/control_token
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      management_net:
+        aliases:
+          - docker-agent
+
+networks:
+  management_net:
+    external: true
