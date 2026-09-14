@@ -14,7 +14,9 @@ fi
 
 mkdir -p "${TARGET_DIR}"
 
-if docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+RUNNING=false
+if docker inspect -f '{{.State.Running}}' "${CONTAINER}" 2>/dev/null | grep -qx true; then
+  RUNNING=true
   REDIS_UID="$(docker exec "${CONTAINER}" id -u redis)"
   REDIS_GID="$(docker exec "${CONTAINER}" id -g redis)"
 else
@@ -26,9 +28,9 @@ install -m 0644 "${SOURCE_DIR}/fullchain.pem" "${TARGET_DIR}/server.crt"
 install -m 0600 "${SOURCE_DIR}/privkey.pem" "${TARGET_DIR}/server.key"
 chown "${REDIS_UID}:${REDIS_GID}" "${TARGET_DIR}/server.crt" "${TARGET_DIR}/server.key"
 
-if docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+if [[ "${RUNNING}" == true ]]; then
   docker restart "${CONTAINER}" >/dev/null
   echo "Deployed ${DOMAIN} TLS certificate to Redis and restarted ${CONTAINER}."
 else
-  echo "Deployed ${DOMAIN} TLS certificate. Redis is not running yet, so no restart was needed."
+  echo "Deployed ${DOMAIN} TLS certificate. Redis was not running, so no restart was needed."
 fi
