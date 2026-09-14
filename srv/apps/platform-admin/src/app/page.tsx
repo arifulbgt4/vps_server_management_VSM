@@ -4,7 +4,8 @@ const modules = [
   {
     name: "PostgreSQL",
     description: "Database, role, password and permission management.",
-    status: "Next",
+    status: "Ready",
+    href: "/postgres",
   },
   {
     name: "MySQL",
@@ -46,7 +47,7 @@ export default function Home() {
           <div className={styles.panelHeader}>
             <div>
               <h2>Infrastructure modules</h2>
-              <p>Features will be added only when the underlying service is ready.</p>
+              <p>Features are added only when the underlying service is ready.</p>
             </div>
           </div>
 
@@ -58,13 +59,14 @@ export default function Home() {
                   <span className={styles.badge}>{module.status}</span>
                 </div>
                 <p>{module.description}</p>
+                {module.href && <a href={module.href}>Open manager →</a>}
               </article>
             ))}
           </div>
         </section>
 
         <footer className={styles.footer}>
-          <span>Platform Admin v0.1.0</span>
+          <span>Platform Admin v0.2.0</span>
           <code>GET /api/health</code>
         </footer>
       </section>
