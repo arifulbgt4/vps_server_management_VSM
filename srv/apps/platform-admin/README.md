@@ -2,7 +2,7 @@
 
 Authenticated Next.js control panel for independently managed VPS services.
 
-Current version: `0.8.0`
+Current version: `0.9.0`
 
 For the full VPS build, networking, TLS, firewall, deployment and troubleshooting history, see:
 
@@ -165,6 +165,52 @@ Persistent policies are stored on the VPS at:
 
 The agent periodically reconciles these policies so they are restored after an allowlisted container is recreated.
 
+## Media Storage manager
+
+Available at `/media`.
+
+Platform Admin connects to the media service through the private `media_net` and never exposes the media admin token to the browser.
+
+Current Media UI features:
+
+```text
+overall media user count
+overall file count and stored bytes
+host filesystem capacity and safe upload capacity
+create media users
+individual user storage quota in GiB
+used / quota / available per user
+enable or disable users
+rotate user API keys
+list a user's files
+show public file URL when available
+permanent file deletion
+permanent user + all-files deletion
+```
+
+The plaintext API key is returned only when a user is created or the key is rotated. The media service stores only a hash.
+
+The media admin token source is:
+
+```text
+/srv/apps/media-service/secrets/admin_token
+```
+
+Platform Admin runs as UID/GID 1001, so create its private copy:
+
+```bash
+sudo install \
+  -o 1001 -g 1001 -m 0600 \
+  /srv/apps/media-service/secrets/admin_token \
+  /srv/apps/platform-admin/secrets/media_admin_token
+```
+
+The media service itself is documented at:
+
+```text
+srv/apps/media-service/README.md
+```
+
 ## Required secret mounts
 
 Platform Admin expects infrastructure secrets from:
@@ -182,6 +228,7 @@ App-local secrets:
 /srv/apps/platform-admin/secrets/auth_session_secret
 /srv/apps/platform-admin/secrets/credential_vault_key
 /srv/apps/platform-admin/secrets/docker_agent_token
+/srv/apps/platform-admin/secrets/media_admin_token
 ```
 
 The Docker agent's root-only source token is:
@@ -192,7 +239,7 @@ The Docker agent's root-only source token is:
 
 Platform Admin runs as UID/GID 1001, so it uses its own `0600` copy rather than directly mounting the root-only source file.
 
-Create/update the copy with:
+Create/update the Docker agent token copy with:
 
 ```bash
 sudo install \
@@ -208,6 +255,7 @@ docker network inspect proxy_net >/dev/null 2>&1 || docker network create proxy_
 docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
 docker network inspect redis_net >/dev/null 2>&1 || docker network create redis_net
 docker network inspect management_net >/dev/null 2>&1 || docker network create management_net
+docker network inspect media_net >/dev/null 2>&1 || docker network create media_net
 ```
 
 ## Update on VPS
@@ -233,5 +281,6 @@ Passwords are decrypted only for an authenticated explicit reveal request.
 The web application never mounts the Docker socket.
 Docker lifecycle/resource control is isolated behind a private token-authenticated allowlisted agent.
 Host /proc and /srv are mounted read-only into the private Docker agent only for host metrics.
+Media admin access stays on media_net and its token is never exposed to the browser.
 Redis plaintext 6379 remains private.
 ```
