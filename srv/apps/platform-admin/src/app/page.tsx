@@ -5,7 +5,8 @@ import styles from "./page.module.css";
 
 const modules = [
   { name: "PostgreSQL", description: "Database, role, encrypted credential and connection management.", status: "Ready", href: "/postgres" },
-  { name: "MySQL", description: "Independent database service management.", status: "Planned" },
+  { name: "MySQL", description: "Private databases, scoped users and encrypted connection management.", status: "Ready", href: "/mysql" },
+  { name: "MongoDB", description: "Private replica-set databases, scoped users and encrypted connection management.", status: "Ready", href: "/mongodb" },
   { name: "Redis", description: "ACL users plus private Redis and public TLS rediss:// connection URLs.", status: "Ready", href: "/redis" },
   { name: "Docker Services", description: "Live CPU/RAM metrics, persistent resource limits, networks, logs and lifecycle controls.", status: "Ready", href: "/docker" },
   { name: "Media Storage", description: "Multi-user files, per-user quotas, API keys, storage usage and permanent deletion.", status: "Ready", href: "/media" },
@@ -42,7 +43,7 @@ export default async function Home() {
           </div>
         </section>
 
-        <footer className={styles.footer}><span>Platform Admin v0.9.0</span><code>GET /api/health</code></footer>
+        <footer className={styles.footer}><span>Platform Admin v1.0.0</span><code>GET /api/health</code></footer>
       </section>
     </main>
   );
