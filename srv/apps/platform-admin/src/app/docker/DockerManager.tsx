@@ -44,12 +44,41 @@ type DockerService = {
 
 type HostInfo = {
   cpus: number;
+  cpu_usage_percent: number | null;
+  cpu_available_percent: number | null;
+  cpu_used_cores: number | null;
+  cpu_available_cores: number | null;
   memory_bytes: number;
+  memory_used_bytes: number | null;
+  memory_available_bytes: number | null;
+  memory_usage_percent: number | null;
+  disk_total_bytes: number | null;
+  disk_used_bytes: number | null;
+  disk_available_bytes: number | null;
+  disk_usage_percent: number | null;
+  disk_path: string;
 };
 
 type LimitDraft = {
   cpu: string;
   memory: string;
+};
+
+const emptyHost: HostInfo = {
+  cpus: 0,
+  cpu_usage_percent: null,
+  cpu_available_percent: null,
+  cpu_used_cores: null,
+  cpu_available_cores: null,
+  memory_bytes: 0,
+  memory_used_bytes: null,
+  memory_available_bytes: null,
+  memory_usage_percent: null,
+  disk_total_bytes: null,
+  disk_used_bytes: null,
+  disk_available_bytes: null,
+  disk_usage_percent: null,
+  disk_path: "/srv",
 };
 
 function formatBytes(bytes: number | null | undefined) {
@@ -77,14 +106,29 @@ function formatPercent(value: number | null | undefined) {
   return `${value.toFixed(1)}%`;
 }
 
+function formatHostPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  if (value < 0.1) return `${value.toFixed(2)}%`;
+  return `${value.toFixed(1)}%`;
+}
+
+function formatCores(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  return `${value.toFixed(2)} CPU${Math.abs(value - 1) < 0.005 ? "" : "s"}`;
+}
+
 function usageBarPercent(usage: number, limit: number | null) {
   if (limit && limit > 0) return Math.min(100, (usage / limit) * 100);
   return Math.min(100, usage);
 }
 
+function hostBarPercent(value: number | null | undefined) {
+  return Math.min(100, Math.max(0, Number(value || 0)));
+}
+
 export default function DockerManager() {
   const [services, setServices] = useState<DockerService[]>([]);
-  const [host, setHost] = useState<HostInfo>({ cpus: 0, memory_bytes: 0 });
+  const [host, setHost] = useState<HostInfo>(emptyHost);
   const [message, setMessage] = useState("Loading Docker services...");
   const [busy, setBusy] = useState<string | null>(null);
   const [limitDrafts, setLimitDrafts] = useState<Record<string, LimitDraft>>({});
@@ -99,7 +143,7 @@ export default function DockerManager() {
 
     const nextServices: DockerService[] = data.services || [];
     setServices(nextServices);
-    setHost(data.host || { cpus: 0, memory_bytes: 0 });
+    setHost({ ...emptyHost, ...(data.host || {}) });
     setLimitDrafts((current) => {
       const next = { ...current };
       for (const service of nextServices) {
@@ -255,7 +299,7 @@ export default function DockerManager() {
           <div>
             <a className={styles.back} href="/">← Platform Admin</a>
             <h1>Docker Services</h1>
-            <p>Live metrics, persistent CPU/RAM limits, network details, logs and lifecycle controls.</p>
+            <p>Live host and container metrics, persistent CPU/RAM limits, network details, logs and lifecycle controls.</p>
           </div>
           <div className={styles.actions}>
             <span className={styles.status}>{message}</span>
@@ -265,9 +309,69 @@ export default function DockerManager() {
           </div>
         </header>
 
+        <section className={styles.hostResourceGrid}>
+          <article className={styles.hostResourceCard}>
+            <div className={styles.hostResourceHeader}>
+              <span>CPU</span>
+              <strong>{host.cpus ? `${host.cpus} CPUs total` : "—"}</strong>
+            </div>
+            <div className={styles.bar}><span style={{ width: `${hostBarPercent(host.cpu_usage_percent)}%` }} /></div>
+            <div className={styles.hostBreakdown}>
+              <div>
+                <span>Used</span>
+                <strong>{formatHostPercent(host.cpu_usage_percent)}</strong>
+                <small>{formatCores(host.cpu_used_cores)}</small>
+              </div>
+              <div>
+                <span>Available</span>
+                <strong>{formatHostPercent(host.cpu_available_percent)}</strong>
+                <small>{formatCores(host.cpu_available_cores)}</small>
+              </div>
+            </div>
+          </article>
+
+          <article className={styles.hostResourceCard}>
+            <div className={styles.hostResourceHeader}>
+              <span>RAM</span>
+              <strong>{host.memory_bytes ? `${formatBytes(host.memory_bytes)} total` : "—"}</strong>
+            </div>
+            <div className={styles.bar}><span style={{ width: `${hostBarPercent(host.memory_usage_percent)}%` }} /></div>
+            <div className={styles.hostBreakdown}>
+              <div>
+                <span>Used</span>
+                <strong>{host.memory_used_bytes === null ? "—" : formatBytes(host.memory_used_bytes)}</strong>
+                <small>{formatHostPercent(host.memory_usage_percent)}</small>
+              </div>
+              <div>
+                <span>Available</span>
+                <strong>{host.memory_available_bytes === null ? "—" : formatBytes(host.memory_available_bytes)}</strong>
+                <small>{host.memory_usage_percent === null ? "—" : formatHostPercent(100 - host.memory_usage_percent)}</small>
+              </div>
+            </div>
+          </article>
+
+          <article className={styles.hostResourceCard}>
+            <div className={styles.hostResourceHeader}>
+              <span>Disk</span>
+              <strong>{host.disk_total_bytes === null ? "—" : `${formatBytes(host.disk_total_bytes)} total`}</strong>
+            </div>
+            <div className={styles.bar}><span style={{ width: `${hostBarPercent(host.disk_usage_percent)}%` }} /></div>
+            <div className={styles.hostBreakdown}>
+              <div>
+                <span>Used</span>
+                <strong>{host.disk_used_bytes === null ? "—" : formatBytes(host.disk_used_bytes)}</strong>
+                <small>{formatHostPercent(host.disk_usage_percent)}</small>
+              </div>
+              <div>
+                <span>Available</span>
+                <strong>{host.disk_available_bytes === null ? "—" : formatBytes(host.disk_available_bytes)}</strong>
+                <small>{host.disk_path || "/srv"} filesystem</small>
+              </div>
+            </div>
+          </article>
+        </section>
+
         <section className={styles.hostSummary}>
-          <div><span>Host CPUs</span><strong>{host.cpus || "—"}</strong></div>
-          <div><span>Host RAM</span><strong>{host.memory_bytes ? formatBytes(host.memory_bytes) : "—"}</strong></div>
           <div><span>Metrics refresh</span><strong>10 sec</strong></div>
           <div><span>Managed services</span><strong>{services.length}</strong></div>
         </section>
@@ -369,7 +473,7 @@ export default function DockerManager() {
         </div>
 
         <p className={styles.note}>
-          CPU and RAM limits are enforced through Docker cgroups. A private agent stores the selected percentages and re-applies them when an allowlisted container is recreated. RAM limits below current usage are rejected.
+          Host CPU/RAM statistics come from the VPS host, while disk statistics represent the filesystem backing /srv. Container CPU and RAM limits are enforced through Docker cgroups and re-applied after recreation.
         </p>
       </section>
     </main>
