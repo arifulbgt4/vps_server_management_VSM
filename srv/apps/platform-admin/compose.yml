@@ -18,6 +18,9 @@ services:
       PGDATABASE: postgres
       PGUSER: platform_controller
       PG_PASSWORD_FILE: /run/secrets/platform_controller_password
+      PG_PUBLIC_HOST: ${PG_PUBLIC_HOST:-db.openmusk.store}
+      PG_PUBLIC_PORT: ${PG_PUBLIC_PORT:-5432}
+      PG_PUBLIC_SSLMODE: ${PG_PUBLIC_SSLMODE:-require}
     ports:
       - "127.0.0.1:${PLATFORM_ADMIN_PORT:-3000}:3000"
     volumes:
