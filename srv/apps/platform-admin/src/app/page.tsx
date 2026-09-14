@@ -7,7 +7,7 @@ const modules = [
   { name: "PostgreSQL", description: "Database, role, encrypted credential and connection management.", status: "Ready", href: "/postgres" },
   { name: "MySQL", description: "Independent database service management.", status: "Planned" },
   { name: "Redis", description: "ACL users, passwords and private application connection URLs.", status: "Ready", href: "/redis" },
-  { name: "Docker Services", description: "Service status and lifecycle overview.", status: "Planned" },
+  { name: "Docker Services", description: "Allowlisted production container status and lifecycle controls.", status: "Ready", href: "/docker" },
 ];
 
 export default async function Home() {
@@ -41,7 +41,7 @@ export default async function Home() {
           </div>
         </section>
 
-        <footer className={styles.footer}><span>Platform Admin v0.4.0</span><code>GET /api/health</code></footer>
+        <footer className={styles.footer}><span>Platform Admin v0.5.0</span><code>GET /api/health</code></footer>
       </section>
     </main>
   );
