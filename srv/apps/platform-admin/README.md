@@ -2,7 +2,7 @@
 
 Minimal Next.js control panel for independently managed VPS services.
 
-Current version: `0.4.0`
+Current version: `0.5.0`
 
 ## Authentication
 
@@ -26,13 +26,6 @@ The vault uses AES-256-GCM. Its master key is stored only on the VPS:
 /srv/apps/platform-admin/secrets/credential_vault_key
 ```
 
-Create it once with:
-
-```bash
-openssl rand -hex 32 > /srv/apps/platform-admin/secrets/credential_vault_key
-chmod 600 /srv/apps/platform-admin/secrets/credential_vault_key
-```
-
 Encrypted credential rows are stored in the `platform_admin` PostgreSQL database through the unprivileged `platform_app` role.
 
 ## PostgreSQL
@@ -46,15 +39,15 @@ Available at `/postgres` after login:
 - delete a database only, or explicitly delete its user too;
 - reveal/hide a full remote PostgreSQL URL from each database row when a stored credential is available.
 
-Newly generated or rotated PostgreSQL passwords are stored encrypted in the credential vault. Passwords that existed before the vault was introduced cannot be recovered; rotate those users once to enable URL reveal.
+Newly generated managed databases revoke public CONNECT/TEMPORARY privileges and keep the selected owner role as the intended application identity.
 
 Remote URL format:
 
 ```text
-postgresql://USER:PASSWORD@db.openmusk.store:5432/DATABASE?sslmode=require
+postgresql://USER:PASSWORD@db.openmusk.store:5432/DATABASE?sslmode=verify-full
 ```
 
-Generating a URL does not itself open PostgreSQL to the Internet. DNS, Contabo firewall policy, Docker-compatible host firewall policy, TLS and `pg_hba.conf` still need to allow the intended remote connection.
+Public PostgreSQL uses PostgreSQL's own TLS endpoint with a CA-trusted certificate for `db.openmusk.store`, SCRAM authentication, hardened `pg_hba.conf`, the Contabo network firewall and a Docker-aware host firewall policy in `DOCKER-USER`.
 
 ## Redis
 
@@ -75,10 +68,23 @@ redis://USER:PASSWORD@redis:6379/0
 
 Do not expose Redis port 6379 publicly by default. Same-VPS application containers should join `redis_net`.
 
-Shared Redis runtime path:
+## Docker Services
+
+Available at `/docker`.
+
+Platform Admin does not mount `/var/run/docker.sock`. A separate `platform-docker-agent` container owns the socket on the private `management_net`. The agent requires a bearer token and only lists/controls exact container names in `DOCKER_AGENT_ALLOWLIST`.
+
+Current actions are:
+
+- list status;
+- start;
+- restart;
+- stop.
+
+Shared Docker agent runtime path:
 
 ```text
-/srv/infrastructure/cache/redis
+/srv/infrastructure/management/docker-agent
 ```
 
 ## Required secret mounts
@@ -89,6 +95,7 @@ Platform Admin expects:
 /srv/infrastructure/databases/postgres/secrets/platform_controller_password
 /srv/infrastructure/databases/postgres/secrets/platform_app_password
 /srv/infrastructure/cache/redis/secrets/platform_controller_password
+/srv/infrastructure/management/docker-agent/secrets/control_token
 /srv/apps/platform-admin/secrets/admin_password_hash
 /srv/apps/platform-admin/secrets/auth_session_secret
 /srv/apps/platform-admin/secrets/credential_vault_key
@@ -100,6 +107,7 @@ Platform Admin expects:
 docker network inspect proxy_net >/dev/null 2>&1 || docker network create proxy_net
 docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
 docker network inspect redis_net >/dev/null 2>&1 || docker network create redis_net
+docker network inspect management_net >/dev/null 2>&1 || docker network create management_net
 ```
 
 ## Update on VPS
@@ -119,3 +127,4 @@ docker compose up -d --build
 - Credential secrets are encrypted at rest with a VPS-only master key.
 - PostgreSQL controller and Redis controller credentials are never exposed to the browser.
 - Connection passwords are decrypted server-side only after an authenticated explicit reveal request.
+- Docker lifecycle control is isolated behind a private, token-authenticated, allowlisted agent instead of exposing the Docker socket directly to the web app.
