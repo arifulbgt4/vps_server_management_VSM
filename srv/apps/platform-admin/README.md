@@ -10,6 +10,8 @@ For the full VPS build, networking, TLS, firewall, deployment and troubleshootin
 docs/PRODUCTION_SETUP.md
 ```
 
+> Documentation uses `example.com` as a placeholder domain. Replace it with your real domain in production configuration.
+
 ## Authentication
 
 Platform Admin uses one local administrator account, a scrypt password hash and an HMAC-signed 12-hour session cookie.
@@ -60,7 +62,7 @@ Managed application databases revoke public CONNECT/TEMPORARY privileges and use
 Public connection format:
 
 ```text
-postgresql://USER:PASSWORD@db.openmusk.store:5432/DATABASE?sslmode=verify-full
+postgresql://USER:PASSWORD@db.example.com:5432/DATABASE?sslmode=verify-full
 ```
 
 Public PostgreSQL uses PostgreSQL's own TLS endpoint with a CA-trusted certificate, SCRAM authentication, hardened `pg_hba.conf`, the provider firewall and the host `DOCKER-USER` policy.
@@ -90,7 +92,7 @@ redis://USER:PASSWORD@redis:6379/0
 Public TLS URL:
 
 ```text
-rediss://USER:PASSWORD@redis.openmusk.store:6380/0
+rediss://USER:PASSWORD@redis.example.com:6380/0
 ```
 
 Redis port `6379` is not exposed publicly.
