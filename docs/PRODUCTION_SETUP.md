@@ -1,40 +1,48 @@
 # Production VPS Setup and Operations Guide
 
-This document records the current production architecture and operating procedures for the VSM host. It covers server hardening, Docker networking, Nginx/HTTPS, PostgreSQL, Redis, n8n queue mode, Media Storage, Platform Admin, the Docker control agent, firewall policy, secrets, verification, scaling and known warnings.
+This is the authoritative operations document for the VSM repository. It records the current single-VPS architecture, security boundaries, deployment procedures, database integrations, n8n queue mode, Media Storage, Docker management, verification and scaling policy.
 
-> Never commit real passwords, private keys, bearer tokens, API keys, encryption keys, or generated application credentials.
+> Never commit real passwords, private keys, bearer tokens, API keys, database controller credentials, MongoDB keyfiles or encryption keys.
 >
-> Documentation uses the reserved `example.com` domain. Replace it only in VPS runtime configuration with the real production domains.
+> Documentation uses `example.com` placeholders. Runtime production configuration may use the real domains.
 
-## 1. Current production deployment
+## 1. Deployment model
 
-The production host is a single Ubuntu 24.04 LTS VPS running Docker Engine, Docker Compose, host Nginx and Certbot.
+The host is an Ubuntu 24.04 LTS VPS running Docker Engine, Docker Compose, host Nginx and Certbot.
 
-Current production services:
+Already deployed/verified services should be distinguished from code that is merely present in Git. Repository code for MySQL and MongoDB is complete, but each service is considered deployed only after its runtime directories/secrets/networks are created on the VPS and health checks pass.
 
-```text
-Platform Admin         authenticated Next.js management UI
-PostgreSQL             shared PostgreSQL 17 service with public TLS
-Redis                  shared Redis 7.4 service with private 6379 + public TLS 6380
-n8n main               editor/API/webhook process
-n8n worker             queue worker for workflow execution
-Media Storage          multi-user file/media service
-Docker control agent   private allowlisted Docker lifecycle/metrics controller
-Nginx + Certbot        reverse proxy, HTTPS and certificate lifecycle
-DOCKER-USER firewall   Docker-aware published-port policy
-```
-
-Example public domains:
+Core architecture:
 
 ```text
-admin.example.com   -> Platform Admin HTTPS
-n8n.example.com     -> n8n HTTPS
-media.example.com   -> Media Storage HTTPS
-db.example.com      -> PostgreSQL TLS on 5432
-redis.example.com   -> Redis TLS on 6380
+Internet
+   |
+Host Nginx
+   |---------------------------|---------------------------|
+   v                           v                           v
+Platform Admin              n8n main                 Media Service
+127.0.0.1:3000              127.0.0.1:5678          127.0.0.1:8082
+                                |
+                                v
+                           Redis queue
+                                |
+                                v
+                           n8n-worker
+
+Private infrastructure networks:
+  postgres_net -> PostgreSQL alias postgres:5432
+  redis_net    -> Redis alias redis:6379
+  mysql_net    -> MySQL alias mysql:3306
+  mongo_net    -> MongoDB alias mongodb:27017
+  media_net    -> Media alias media-service:8080
+  management_net -> Platform Admin <-> Docker agent
 ```
 
-Public ports intentionally exposed:
+A separate HTTP load balancer is not required while only one HTTP-facing instance of each application exists on this VPS.
+
+## 2. Public ports
+
+Intentionally exposed ports:
 
 ```text
 22/tcp    SSH
@@ -44,44 +52,20 @@ Public ports intentionally exposed:
 6380/tcp  Redis TLS
 ```
 
-The following application ports remain private or loopback-only:
+Private/loopback-only ports:
 
 ```text
-3000   Platform Admin, 127.0.0.1 only
-5678   n8n main, 127.0.0.1 only
-5678   n8n worker health endpoint, Docker-internal only
-6379   Redis plaintext, Docker-internal only
-8080   Media Service container port, Docker-internal
-8082   Media Service host binding, 127.0.0.1 only
+3000    Platform Admin, loopback only
+5678    n8n main, loopback only
+5678    n8n worker health endpoint, Docker-internal only
+6379    Redis plaintext, Docker-private
+3306    MySQL, Docker-private
+27017   MongoDB, Docker-private
+8080    Media Service container port, Docker-private
+8082    Media Service host binding, loopback only
 ```
 
-## 2. Architecture
-
-```text
-                           Internet
-                              |
-                         Host Nginx
-                 +------------+-------------+
-                 |            |             |
-          Platform Admin    n8n main    Media Service
-          127.0.0.1:3000  127.0.0.1:5678 127.0.0.1:8082
-                              |
-                              v
-                         Redis queue
-                              |
-                              v
-                         n8n-worker
-
-Shared internal services:
-  PostgreSQL -> postgres_net
-  Redis      -> redis_net
-  Media      -> media_net
-  Docker ctl -> management_net
-```
-
-The current deployment is a single-VPS architecture. Nginx is the HTTP reverse proxy and TLS terminator. A separate HTTP load balancer is not required while there is only one HTTP-facing instance of each service.
-
-n8n scales workflow execution through Redis queue workers. Redis queue distribution is separate from HTTP load balancing.
+Do not add public firewall rules for MySQL `3306` or MongoDB `27017` in the private-first deployment.
 
 ## 3. Runtime filesystem layout
 
@@ -89,7 +73,9 @@ n8n scales workflow execution through Redis queue workers. Redis queue distribut
 /srv/
 ├── infrastructure/
 │   ├── databases/
-│   │   └── postgres/
+│   │   ├── postgres/
+│   │   ├── mysql/
+│   │   └── mongodb/
 │   ├── cache/
 │   │   └── redis/
 │   ├── management/
@@ -105,20 +91,9 @@ n8n scales workflow execution through Redis queue workers. Redis queue distribut
 └── backups/
 ```
 
-Persistent application data must live outside disposable container layers.
+Persistent data must remain outside disposable container layers.
 
-## 4. Base server hardening
-
-Use a non-root administrator account and SSH keys only.
-
-Recommended packages:
-
-```bash
-sudo apt update
-sudo apt install -y \
-  curl wget git nano unzip ca-certificates gnupg \
-  ufw fail2ban nginx certbot python3-certbot-nginx
-```
+## 4. Base hardening
 
 Required SSH policy:
 
@@ -129,22 +104,19 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 ```
 
-Verify:
+Recommended packages:
 
 ```bash
-sudo sshd -T | grep -E \
-  'permitrootlogin|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication'
+sudo apt update
+sudo apt install -y \
+  curl wget git nano unzip ca-certificates gnupg \
+  ufw fail2ban nginx certbot python3-certbot-nginx quota rsync
 ```
 
-Enable Fail2ban:
+Enable Fail2ban and set timezone:
 
 ```bash
 sudo systemctl enable --now fail2ban
-```
-
-Set timezone:
-
-```bash
 sudo timedatectl set-timezone Asia/Dhaka
 ```
 
@@ -159,9 +131,7 @@ sudo ufw allow 443/tcp
 sudo ufw enable
 ```
 
-Docker-published ports can bypass normal UFW INPUT handling. The deployment therefore also uses an explicit `DOCKER-USER` policy.
-
-Provider/network firewall rules should allow only the required public ports before the final DROP rule:
+Provider/network firewall allows only the required public ports before the final DROP rule:
 
 ```text
 22
@@ -171,33 +141,19 @@ Provider/network firewall rules should allow only the required public ports befo
 6380
 ```
 
-Do not expose Redis `6379`, Platform Admin `3000`, n8n `5678`, or Media `8082` publicly.
-
-Tracked Docker firewall script:
+Docker-published ports can bypass ordinary UFW INPUT handling. The deployment therefore also uses the tracked `DOCKER-USER` policy:
 
 ```text
 srv/infrastructure/networking/postgres-public/docker-firewall.sh
 ```
 
-Installed as:
-
-```text
-/usr/local/sbin/vsm-docker-firewall.sh
-```
-
-Systemd unit:
-
-```text
-srv/infrastructure/networking/postgres-public/vsm-docker-firewall.service
-```
-
-Expected `DOCKER-USER` logic:
+Expected logic:
 
 ```text
 ACCEPT RELATED,ESTABLISHED
 ACCEPT original destination 5432
 ACCEPT original destination 6380
-DROP   other NEW traffic arriving from the external interface
+DROP   other NEW traffic entering from the external interface
 ```
 
 Verify:
@@ -206,104 +162,60 @@ Verify:
 sudo iptables -nvL DOCKER-USER --line-numbers
 ```
 
-## 6. Docker networks
+## 6. External Docker networks
 
-Required external networks:
+Create once:
 
 ```bash
 docker network inspect proxy_net >/dev/null 2>&1 || docker network create proxy_net
 docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
 docker network inspect redis_net >/dev/null 2>&1 || docker network create redis_net
+docker network inspect mysql_net >/dev/null 2>&1 || docker network create mysql_net
+docker network inspect mongo_net >/dev/null 2>&1 || docker network create mongo_net
 docker network inspect management_net >/dev/null 2>&1 || docker network create management_net
 docker network inspect media_net >/dev/null 2>&1 || docker network create media_net
 ```
 
-Network responsibilities:
+Same-VPS applications should use these private aliases instead of public database domains whenever possible.
+
+## 7. Nginx / HTTPS
+
+Host Nginx terminates HTTPS for HTTP-facing applications:
 
 ```text
-proxy_net       selected application/proxy connectivity
-postgres_net    same-VPS PostgreSQL connectivity; alias postgres
-redis_net       same-VPS Redis connectivity; alias redis
-management_net  Platform Admin <-> Docker control agent
-media_net       Platform Admin/n8n <-> Media Service; alias media-service
+admin.example.com -> 127.0.0.1:3000
+n8n.example.com   -> 127.0.0.1:5678
+media.example.com -> 127.0.0.1:8082
 ```
 
-Do not use the public PostgreSQL or Redis domains for same-VPS application traffic when the private Docker network is available.
+PostgreSQL and public Redis TLS are not HTTP reverse-proxy workloads.
 
-## 7. Nginx and HTTPS
+MySQL and MongoDB have no public Nginx endpoint in the initial integration.
 
-Host Nginx terminates HTTPS and proxies HTTP-facing applications to loopback bindings.
+## 8. Platform Admin 1.0.0
 
-Example routing:
-
-```text
-admin.example.com -> http://127.0.0.1:3000
-n8n.example.com   -> http://127.0.0.1:5678
-media.example.com -> http://127.0.0.1:8082
-```
-
-Issue/renew certificates with Certbot. Example:
-
-```bash
-sudo certbot --nginx -d admin.example.com
-sudo certbot --nginx -d n8n.example.com
-sudo certbot --nginx -d media.example.com
-sudo certbot renew --dry-run
-```
-
-The Media Nginx configuration streams uploads instead of buffering large files and blocks the private admin API from the public internet.
-
-A separate load balancer is intentionally not deployed. Add one only when multiple HTTP-facing instances or multiple VPS nodes exist.
-
-## 8. Platform Admin
-
-Runtime path:
+Runtime:
 
 ```text
 /srv/apps/platform-admin
 ```
 
-Current version:
-
-```text
-0.9.0
-```
-
 Modules:
 
 ```text
-/postgres   PostgreSQL database/role/credential management
-/redis      Redis ACL user/credential management
-/docker     Docker metrics, logs, lifecycle and resource limits
-/media      Media users, quotas, keys and files
+/postgres   PostgreSQL management
+/mysql      MySQL management
+/mongodb    MongoDB management
+/redis      Redis ACL management
+/docker     Docker metrics/lifecycle/resource limits
+/media      Media users/quotas/keys/files
 ```
 
-Authentication uses a local administrator account, scrypt password hash and HMAC-signed session cookie.
+The credential vault uses AES-256-GCM and stores encrypted recoverable application credentials in the `platform_admin` PostgreSQL database.
 
-App-local secrets:
+Database root/bootstrap credentials are deliberately not exposed to the browser and are not mounted into Platform Admin.
 
-```text
-admin_password_hash
-auth_session_secret
-credential_vault_key
-docker_agent_token
-media_admin_token
-```
-
-The credential vault uses AES-256-GCM and stores encrypted credentials in the `platform_admin` PostgreSQL database through the unprivileged `platform_app` role.
-
-Media user API keys are handled in two layers:
-
-```text
-Media Service   -> stores only the API-key hash
-Platform Admin  -> stores an encrypted copy in the credential vault for authenticated Show/Hide
-```
-
-A key created before encrypted-vault support cannot be recovered from the Media Service hash; rotate it once to place the new key in the vault.
-
-The `/media` page also contains copyable Next.js App Router examples showing server-side use of the Media API without exposing the bearer key to browser code.
-
-Platform Admin never mounts `/var/run/docker.sock`.
+Platform Admin itself never mounts `docker.sock`.
 
 ## 9. PostgreSQL
 
@@ -313,75 +225,27 @@ Container:
 platform-postgres
 ```
 
-Image:
+Private endpoint:
 
 ```text
-postgres:17-alpine
+postgres:5432
 ```
 
-Runtime path:
-
-```text
-/srv/infrastructure/databases/postgres/
-```
-
-Management roles:
-
-```text
-postgres             emergency/local superuser
-platform_controller  CREATEDB + CREATEROLE, not superuser
-platform_app         unprivileged owner of platform_admin
-```
-
-Application roles created from Platform Admin are unprivileged.
-
-Same-VPS applications connect privately:
-
-```text
-host=postgres
-port=5432
-```
-
-Public applications use TLS:
+Public TLS format:
 
 ```text
 postgresql://USER:PASSWORD@db.example.com:5432/DATABASE?sslmode=verify-full
 ```
 
-Relevant TLS policy:
+Management identities:
 
 ```text
-ssl = on
-ssl_min_protocol_version = TLSv1.2
+postgres             emergency/local superuser
+platform_controller  management role, not superuser
+platform_app         unprivileged Platform Admin database owner
 ```
 
-The hardened `pg_hba.conf` permits private Docker SCRAM access, rejects remote management/system identities, permits remote application roles only through TLS + SCRAM, and rejects public non-TLS sessions.
-
-Tracked HBA template:
-
-```text
-srv/infrastructure/networking/postgres-public/pg_hba.conf
-```
-
-Verify active rules:
-
-```bash
-docker exec platform-postgres \
-  psql -U postgres -d postgres \
-  -c "SELECT line_number,type,database,user_name,address,auth_method,error FROM pg_hba_file_rules ORDER BY line_number;"
-```
-
-Certificate deployment script:
-
-```text
-srv/infrastructure/networking/postgres-public/deploy-postgres-cert.sh
-```
-
-Public certificate hostname example:
-
-```text
-db.example.com
-```
+Application roles remain unprivileged.
 
 ## 10. Redis
 
@@ -391,95 +255,220 @@ Container:
 platform-redis
 ```
 
-Image:
+Endpoints:
 
 ```text
-redis:7.4-alpine
+redis:6379                     private Docker plaintext
+redis.example.com:6380         public TLS
 ```
 
-Runtime path:
+`default` is disabled. `platform_controller` is management-only. Applications use dedicated ACL identities.
+
+n8n queue uses a dedicated user such as `n8n_queue` and Redis DB index `1`.
+
+## 11. MySQL integration
+
+Tracked stack:
 
 ```text
-/srv/infrastructure/cache/redis
+srv/infrastructure/databases/mysql/
 ```
 
-Listeners:
+Container and alias:
 
 ```text
-6379  private plaintext listener on redis_net
-6380  public TLS listener
+platform-mysql
+mysql:3306
 ```
 
-Only TLS port `6380` is host-published.
+Port `3306` is not host-published.
 
-The `default` Redis user is disabled. `platform_controller` is reserved for internal administration. Applications use dedicated ACL users generated from Platform Admin.
-
-Private application URL:
+Identity model:
 
 ```text
-redis://USER:PASSWORD@redis:6379/0
+root                 bootstrap/emergency only
+platform_controller  Platform Admin management only
+app users             database-scoped runtime identities
 ```
 
-Public TLS URL:
+Platform Admin `/mysql` supports:
 
 ```text
-rediss://USER:PASSWORD@redis.example.com:6380/0
+list databases and sizes
+list users
+create database + new application user
+create database using an existing application user
+rotate passwords
+delete database only
+delete database + user
+reveal private URL from encrypted credential vault
 ```
 
-Redis persists data with AOF and configured RDB snapshots.
-
-### n8n Redis identity
-
-n8n queue traffic uses a dedicated ACL user:
+Private connection format:
 
 ```text
-n8n_queue
+mysql://USER:PASSWORD@mysql:3306/DATABASE
 ```
 
-It connects internally to:
+### Deploy MySQL
+
+Copy tracked code without overwriting runtime state:
+
+```bash
+cd /tmp/vps_server_management_VSM
+git pull
+sudo mkdir -p /srv/infrastructure/databases/mysql
+sudo rsync -a \
+  --exclude='.env' \
+  --exclude='data/' \
+  --exclude='backups/' \
+  --exclude='secrets/' \
+  srv/infrastructure/databases/mysql/ \
+  /srv/infrastructure/databases/mysql/
+```
+
+Prepare runtime:
+
+```bash
+cd /srv/infrastructure/databases/mysql
+mkdir -p data backups secrets
+[ -f .env ] || cp .env.example .env
+chmod 600 .env
+
+docker network inspect mysql_net >/dev/null 2>&1 || docker network create mysql_net
+```
+
+Create secrets only if they do not already exist:
+
+```bash
+[ -f secrets/root_password ] || openssl rand -hex 32 > secrets/root_password
+[ -f secrets/controller_password ] || openssl rand -hex 32 > secrets/controller_password
+
+sudo chown root:root secrets/root_password
+sudo chmod 600 secrets/root_password
+sudo chown 1001:1001 secrets/controller_password
+sudo chmod 600 secrets/controller_password
+sudo chown -R 999:999 data
+```
+
+Start and verify:
+
+```bash
+docker compose config
+docker compose pull
+docker compose up -d
+docker compose ps
+docker logs platform-mysql --tail 100
+docker logs platform-mysql-init --tail 100
+```
+
+The `platform-mysql-init` container is expected to finish successfully and exit after creating/rotating the controller account.
+
+## 12. MongoDB integration
+
+Tracked stack:
 
 ```text
-redis:6379
+srv/infrastructure/databases/mongodb/
 ```
 
-Queue database index:
+Container/alias/replica:
 
 ```text
-1
+platform-mongodb
+mongodb:27017
+rs0
 ```
 
-This keeps n8n queue keys logically separate from applications using DB `0`.
+Port `27017` is not host-published.
 
-The n8n Redis password is stored in:
+MongoDB uses a single-node replica set from day one so transactions/change streams work and future replica expansion does not require converting from standalone mode.
+
+Identity model:
 
 ```text
-/srv/apps/n8n/secrets/redis_password
+root                 bootstrap/emergency only
+platform_controller  Platform Admin management only
+app users             readWrite on their own database
 ```
 
-and is not stored in `.env`.
+Platform Admin `/mongodb` supports database/user creation, password rotation, encrypted connection reveal, database size listing and deletion.
 
-## 11. n8n production queue mode
-
-Runtime path:
+Private connection format:
 
 ```text
-/srv/apps/n8n
+mongodb://USER:PASSWORD@mongodb:27017/DATABASE?authSource=DATABASE&replicaSet=rs0
 ```
 
-Image:
+### Deploy MongoDB
 
-```text
-docker.n8n.io/n8nio/n8n:2.38.7
+Copy tracked code:
+
+```bash
+cd /tmp/vps_server_management_VSM
+git pull
+sudo mkdir -p /srv/infrastructure/databases/mongodb
+sudo rsync -a \
+  --exclude='.env' \
+  --exclude='data/' \
+  --exclude='backups/' \
+  --exclude='secrets/' \
+  srv/infrastructure/databases/mongodb/ \
+  /srv/infrastructure/databases/mongodb/
 ```
+
+Prepare runtime:
+
+```bash
+cd /srv/infrastructure/databases/mongodb
+mkdir -p data backups secrets
+[ -f .env ] || cp .env.example .env
+chmod 600 .env
+
+docker network inspect mongo_net >/dev/null 2>&1 || docker network create mongo_net
+```
+
+Create persistent secrets once:
+
+```bash
+[ -f secrets/root_password ] || openssl rand -hex 32 > secrets/root_password
+[ -f secrets/controller_password ] || openssl rand -hex 32 > secrets/controller_password
+[ -f secrets/replica_keyfile ] || openssl rand -hex 64 > secrets/replica_keyfile
+
+sudo chown root:root secrets/root_password
+sudo chmod 600 secrets/root_password
+sudo chown 1001:1001 secrets/controller_password
+sudo chmod 600 secrets/controller_password
+sudo chown 999:999 secrets/replica_keyfile
+sudo chmod 400 secrets/replica_keyfile
+sudo chown -R 999:999 data
+```
+
+Start and verify:
+
+```bash
+docker compose config
+docker compose pull
+docker compose up -d
+docker compose ps
+docker logs platform-mongodb --tail 100
+docker logs platform-mongodb-init --tail 100
+```
+
+The one-shot initializer should initiate `rs0`, wait for PRIMARY state and create/rotate the controller account.
+
+Never regenerate the replica keyfile on a live replica set without a reviewed key rotation procedure.
+
+## 13. n8n queue mode
 
 Containers:
 
 ```text
-n8n          main editor/API/webhook process
-n8n-worker   workflow execution worker
+n8n          editor/API/webhook process
+n8n-worker   execution worker
 ```
 
-Queue mode is enabled permanently in the tracked production compose:
+Queue settings:
 
 ```text
 EXECUTIONS_MODE=queue
@@ -492,82 +481,21 @@ QUEUE_BULL_PREFIX=n8n
 N8N_DEFAULT_BINARY_DATA_MODE=database
 ```
 
-Initial worker concurrency:
+Initial worker concurrency is `5`.
+
+Both main and worker are tracked on:
 
 ```text
-5
+postgres_net
+redis_net
+mysql_net
+mongo_net
+media_net
 ```
 
-The main and worker share:
+This does not mean n8n runtime data moved to MySQL/MongoDB. n8n itself continues using PostgreSQL; the additional networks allow workflow nodes to reach application databases privately.
 
-```text
-same PostgreSQL database
-same N8N_ENCRYPTION_KEY
-same Redis queue identity
-same media_net access
-```
-
-Only `n8n` publishes a host port:
-
-```text
-127.0.0.1:5678 -> 5678
-```
-
-`n8n-worker` has no published host port.
-
-n8n secret files:
-
-```text
-/srv/apps/n8n/secrets/db_password
-/srv/apps/n8n/secrets/encryption_key
-/srv/apps/n8n/secrets/redis_password
-```
-
-Never regenerate `encryption_key` after credentials exist.
-
-The custom entrypoint reads secret files and exports the database password, encryption key and Redis password only inside the container process.
-
-Expected worker log:
-
-```text
-n8n worker is now ready
-Version: 2.38.7
-Concurrency: 5
-```
-
-Health:
-
-```bash
-curl -fsS http://127.0.0.1:5678/healthz/readiness
-
-docker exec n8n-worker \
-  node -e "fetch('http://127.0.0.1:5678/healthz/readiness').then(async r=>console.log(r.status,await r.text()))"
-```
-
-Verify Redis membership:
-
-```bash
-docker network inspect redis_net \
-  --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
-```
-
-Expected to include:
-
-```text
-platform-redis
-n8n
-n8n-worker
-```
-
-For durable application images, videos, PDFs and documents, use Media Storage rather than n8n execution storage.
-
-## 12. Media Storage Service
-
-Runtime path:
-
-```text
-/srv/apps/media-service
-```
+## 14. Media Storage
 
 Container:
 
@@ -575,76 +503,22 @@ Container:
 platform-media
 ```
 
-Host binding:
+Bindings:
 
 ```text
 127.0.0.1:8082 -> 8080
+media-service:8080 on media_net
 ```
 
-Public example domain:
+Physical files live under:
 
 ```text
-https://media.example.com
+/srv/apps/media-service/storage
 ```
 
-Private same-VPS endpoint:
+Metadata/quota ownership lives in its PostgreSQL database. The Media Service stores API-key hashes; Platform Admin may keep encrypted copies for authenticated reveal.
 
-```text
-http://media-service:8080
-```
-
-The service supports images, video, audio, PDF, Office/OpenDocument files, text/CSV/Markdown and common archives subject to the configured allowlist.
-
-Storage model:
-
-```text
-physical files -> /srv/apps/media-service/storage
-metadata       -> dedicated PostgreSQL media database
-ownership      -> per media user
-quota          -> per media user
-```
-
-Per-user quotas are enforced transactionally. The default host reserve prevents uploads from consuming the final 5 GiB of the filesystem.
-
-Default per-file maximum:
-
-```text
-512 MiB
-```
-
-Hard delete behavior:
-
-```text
-file delete -> physical file + PostgreSQL metadata + quota usage removed
-user delete -> account + API key + all metadata + all owned files removed
-```
-
-Admin operations use the private `media_net` and separate `admin_token`.
-
-Public Nginx must not expose `/api/v1/admin/*`.
-
-User binary endpoint:
-
-```text
-GET /api/v1/files/:id/content
-Authorization: Bearer ms_live_...
-```
-
-n8n should use the private endpoint where possible:
-
-```text
-http://media-service:8080/api/v1/files/<FILE_ID>/content
-```
-
-The Media Service stores API-key hashes only. Platform Admin optionally retains an encrypted copy in its credential vault for authenticated reveal/copy actions.
-
-## 13. Docker control agent
-
-Runtime path:
-
-```text
-/srv/infrastructure/management/docker-agent
-```
+## 15. Docker control agent
 
 Container:
 
@@ -652,234 +526,162 @@ Container:
 platform-docker-agent
 ```
 
-The agent:
-
-```text
-publishes no host port
-runs on management_net
-owns docker.sock
-requires a bearer token
-uses an exact container allowlist
-supports logs/lifecycle/resource controls
-persists CPU/RAM policies
-```
-
-Current default allowlist:
+Default managed allowlist:
 
 ```text
 platform-admin
 platform-postgres
 platform-redis
+platform-mysql
+platform-mongodb
 n8n
 n8n-worker
 platform-media
 ```
 
-Persistent resource policy:
+Bootstrap containers `platform-mysql-init` and `platform-mongodb-init` are intentionally excluded.
 
-```text
-/srv/infrastructure/management/docker-agent/data/resource-limits.json
-```
+If `/srv/infrastructure/management/docker-agent/.env` explicitly overrides `DOCKER_AGENT_ALLOWLIST`, update that runtime override too; Compose defaults do not replace an explicit `.env` value.
 
-The root-only agent token lives at:
+## 16. Apply Platform Admin integration
 
-```text
-/srv/infrastructure/management/docker-agent/secrets/control_token
-```
-
-Platform Admin uses a UID/GID 1001 private copy:
-
-```bash
-sudo install \
-  -o 1001 -g 1001 -m 0600 \
-  /srv/infrastructure/management/docker-agent/secrets/control_token \
-  /srv/apps/platform-admin/secrets/docker_agent_token
-```
-
-## 14. Docker Services resource limits
-
-Platform Admin `/docker` shows host and container metrics and supports start/stop/restart/logs plus persistent CPU/RAM limits.
-
-CPU percentage is relative to total VPS CPU capacity. On a 4-vCPU host:
-
-```text
-10%  = 0.40 CPU
-25%  = 1.00 CPU
-50%  = 2.00 CPU
-100% = 4.00 CPU
-```
-
-RAM percentage is also relative to total VPS memory. Limits are maxima, not target usage.
-
-The agent rejects unsafe live RAM reductions below current cgroup usage and verifies limits after Docker applies them.
-
-## 15. Updating deployed services
-
-### Platform Admin
+After MySQL and MongoDB runtime secret files exist, update Platform Admin safely:
 
 ```bash
 cd /tmp/vps_server_management_VSM
 git pull
-cp -a srv/apps/platform-admin/. /srv/apps/platform-admin/
+sudo rsync -a \
+  --exclude='.env' \
+  --exclude='secrets/' \
+  --exclude='node_modules/' \
+  srv/apps/platform-admin/ \
+  /srv/apps/platform-admin/
+
 cd /srv/apps/platform-admin
+docker compose config
 docker compose up -d --build
 docker compose ps
+docker logs platform-admin --tail 100
 ```
 
-### n8n main + worker
+Expected authenticated pages:
+
+```text
+/postgres
+/mysql
+/mongodb
+/redis
+/docker
+/media
+```
+
+## 17. Apply n8n network integration
 
 ```bash
 cd /tmp/vps_server_management_VSM
 git pull
-cp -a srv/apps/n8n/. /srv/apps/n8n/
+sudo rsync -a \
+  --exclude='.env' \
+  --exclude='data/' \
+  --exclude='secrets/' \
+  srv/apps/n8n/ \
+  /srv/apps/n8n/
+
 cd /srv/apps/n8n
 docker compose config
 docker compose up -d --force-recreate
 docker compose ps
 ```
 
-Do not overwrite or regenerate runtime secret contents.
-
-### Media Service
+Expected Redis/network members can be inspected with:
 
 ```bash
-cd /tmp/vps_server_management_VSM
-git pull
-cp -a srv/apps/media-service/. /srv/apps/media-service/
-cd /srv/apps/media-service
-docker compose up -d --build
-docker compose ps
+docker network inspect mysql_net --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
+docker network inspect mongo_net --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
 ```
 
-### Docker agent
+After full integration, expected long-running members include:
+
+```text
+mysql_net:
+  platform-mysql
+  platform-admin
+  n8n
+  n8n-worker
+
+mongo_net:
+  platform-mongodb
+  platform-admin
+  n8n
+  n8n-worker
+```
+
+## 18. Private connectivity verification
+
+From n8n:
+
+```bash
+docker exec n8n node -e "require('net').connect(3306,'mysql').on('connect',function(){console.log('mysql tcp ok');this.end()}).on('error',e=>{console.error(e);process.exit(1)})"
+
+docker exec n8n node -e "require('net').connect(27017,'mongodb').on('connect',function(){console.log('mongodb tcp ok');this.end()}).on('error',e=>{console.error(e);process.exit(1)})"
+```
+
+From Platform Admin the `/mysql` and `/mongodb` pages should load without connection errors.
+
+## 19. Docker-agent update
 
 ```bash
 cd /tmp/vps_server_management_VSM
 git pull
-cp srv/infrastructure/management/docker-agent/agent.mjs \
-  /srv/infrastructure/management/docker-agent/agent.mjs
 cp srv/infrastructure/management/docker-agent/compose.yml \
   /srv/infrastructure/management/docker-agent/compose.yml
+cp srv/infrastructure/management/docker-agent/agent.mjs \
+  /srv/infrastructure/management/docker-agent/agent.mjs
+
 cd /srv/infrastructure/management/docker-agent
 docker compose up -d --force-recreate
+docker logs platform-docker-agent --tail 100
 ```
 
-## 16. Verification checklist
+Then `/docker` can manage `platform-mysql` and `platform-mongodb` after the containers exist.
 
-```bash
-# Core containers
-docker ps
+## 20. Backup / recovery
 
-# Platform Admin
-docker compose -f /srv/apps/platform-admin/compose.yml ps
-
-# n8n queue mode
-docker compose -f /srv/apps/n8n/compose.yml ps
-docker logs n8n --tail 100
-docker logs n8n-worker --tail 100
-
-# Media
-docker compose -f /srv/apps/media-service/compose.yml ps
-curl -fsS http://127.0.0.1:8082/healthz
-curl -fsS https://media.example.com/healthz
-
-# Redis
-docker compose -f /srv/infrastructure/cache/redis/compose.yml ps
-
-# Internal networks
-docker network inspect redis_net \
-  --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
-docker network inspect media_net \
-  --format '{{range $id,$c := .Containers}}{{println $c.Name}}{{end}}'
-
-# Firewall
-sudo iptables -nvL DOCKER-USER --line-numbers
-
-# TLS renewal
-sudo certbot renew --dry-run
-```
-
-Expected media network membership includes:
-
-```text
-platform-media
-platform-admin
-n8n
-n8n-worker
-```
-
-Expected queue runtime includes two healthy containers:
-
-```text
-n8n
-n8n-worker
-```
-
-## 17. Backups and recovery
-
-Automated centralized backup orchestration is not yet implemented. Until it is, treat these as critical persistent state:
+Critical state includes:
 
 ```text
 PostgreSQL databases
 Redis /data
+MySQL /var/lib/mysql data + logical dumps
+MongoDB /data/db + logical dumps + replica_keyfile
 /srv/apps/n8n/data
 /srv/apps/n8n/secrets/encryption_key
 /srv/apps/media-service/storage
-Platform Admin credential-vault key
-all application secret files needed for recovery
+Platform Admin credential_vault_key
+all runtime secret files required to authenticate restored services
 ```
 
-A PostgreSQL dump alone is not enough to recover Media Storage because the physical files live on disk. Back up the media database and media storage tree together.
+A database backup is not validated until an actual restore test succeeds.
+
+MySQL should use `mysqldump`/equivalent consistent backup procedures. MongoDB should use `mongodump --archive --gzip`/`mongorestore` or a reviewed filesystem snapshot process.
 
 Do not restore an n8n database without the matching persistent `N8N_ENCRYPTION_KEY`.
 
-## 18. Known warnings and troubleshooting
+## 21. Resource management
 
-### n8n Python task runner warning
+Platform Admin `/docker` currently controls CPU and RAM limits through the private Docker agent.
 
-The official n8n image may log that Python 3 is missing for the internal Python task runner. This is non-fatal when Python Code tasks are not required. For production Python Code execution, use n8n's external task-runner architecture rather than installing Python into the main image ad hoc.
+Persistent storage quotas are a separate filesystem concern. The current root filesystem is ext4 without project quota enabled, so hard per-directory service storage quotas must not be claimed as active until a dedicated quota-capable filesystem or another reviewed quota design is deployed.
 
-### n8n JavaScript localStorage warning
+## 22. Scaling and load balancing
 
-The JS runner may emit an experimental localStorage warning. The JavaScript task runner can still register and operate.
+Scale n8n execution first through worker concurrency/additional workers. Redis distributes execution jobs; no HTTP load balancer is needed for worker distribution.
 
-### PostgreSQL client deprecation warning in n8n
+Introduce HTTP load balancing only after multiple HTTP-facing instances exist. Introduce an external/cloud load balancer and multi-node database architecture only when moving to multiple VPS nodes/high availability.
 
-A `client.query()` deprecation warning can originate from n8n or an underlying dependency. Treat it as a dependency warning unless accompanied by failed database operations or unhealthy containers.
+The current single VPS remains a single point of failure.
 
-### Redis TLS unexpected EOF
-
-TLS scanners or clients that disconnect early can create `unexpected eof while reading` log entries. Verify with a proper TLS PING before diagnosing a service failure.
-
-### Docker agent token EACCES
-
-The source control token must remain `root:root 0600`. Platform Admin consumes its own UID/GID 1001 copy.
-
-### Media API key created before vault support
-
-The Media Service stores only the hash, so old plaintext keys cannot be reconstructed. Rotate the key once; Platform Admin will then store the new plaintext value encrypted in the credential vault.
-
-## 19. Scaling and load-balancing policy
-
-Current architecture does not require a separate load balancer.
-
-Scale n8n execution first by increasing worker capacity:
-
-```text
-1. observe queue wait time, CPU, RAM and PostgreSQL connections
-2. increase worker concurrency carefully, or
-3. add additional n8n worker containers
-```
-
-Redis distributes execution jobs between workers; an HTTP load balancer is not needed for worker distribution.
-
-Introduce HTTP load balancing only when there are multiple HTTP-facing instances, for example multiple n8n main/webhook processors or multiple Media Service instances.
-
-Introduce an external/cloud load balancer and multi-node architecture when running more than one VPS and high availability is required.
-
-The current single VPS remains a single point of failure even if a load balancer were installed on the same machine.
-
-## 20. Security invariants
+## 23. Security invariants
 
 ```text
 No root SSH login.
@@ -889,33 +691,40 @@ n8n main 5678 stays loopback-only.
 n8n-worker publishes no host port.
 Media 8082 stays loopback-only.
 Redis 6379 stays Docker-private.
-Redis public clients use TLS on 6380.
+MySQL 3306 stays Docker-private.
+MongoDB 27017 stays Docker-private.
 PostgreSQL public clients use TLS/SCRAM and sslmode=verify-full.
-Same-VPS apps prefer private Docker networks.
+Redis public clients use TLS on 6380.
+Database root/bootstrap credentials are never used by applications.
+Platform Admin receives controller credentials only.
+n8n workflows receive application-scoped database credentials only.
+MongoDB replica keyfile remains persistent and private.
 Platform Admin never mounts docker.sock.
-Docker lifecycle control stays behind the private allowlisted agent.
-n8n uses a dedicated Redis ACL user.
+Docker lifecycle control remains behind the private allowlisted agent.
 Main and worker share the same persistent n8n encryption key.
 Media admin API remains private and token-protected.
-Media user keys are hashed in Media Service; reveal copies are encrypted in Platform Admin.
 Secrets are never committed to Git.
 DOCKER-USER blocks unapproved public Docker-published ports.
 ```
 
-## 21. Not yet implemented
+## 24. Runtime acceptance checklist
 
-Do not assume the following exist until explicitly deployed and verified:
+Do not mark MySQL/MongoDB integration complete on the VPS until all of these pass:
 
 ```text
-MySQL production service
-centralized monitoring/alerting stack
-automated centralized backup policy
-mail server / outbound mail stack
-multi-VPS high availability
-external/cloud load balancer
-PostgreSQL HA/failover
-Redis HA/cluster
-object-storage backend for Media Service
+platform-mysql healthy
+platform-mysql-init exited 0
+platform-mongodb healthy
+platform-mongodb-init exited 0
+Platform Admin rebuild healthy
+/mysql loads
+/mongodb loads
+n8n healthy
+n8n-worker healthy
+n8n -> mysql:3306 TCP succeeds
+n8n -> mongodb:27017 TCP succeeds
+platform-mysql appears in /docker
+platform-mongodb appears in /docker
+3306 is not publicly published
+27017 is not publicly published
 ```
-
-Add future capabilities as independent infrastructure modules rather than weakening the current service boundaries.
