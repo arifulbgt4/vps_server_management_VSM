@@ -5,6 +5,7 @@ import {
   createDatabaseWithRole,
   deleteDatabaseAndRole,
   deleteDatabaseOnly,
+  getDatabaseConnection,
   listPostgresResources,
   rotateRolePassword,
 } from "@/lib/postgres";
@@ -49,6 +50,10 @@ export async function POST(request: Request) {
         await createDatabaseForExistingRole(body.database, body.role),
         { status: 201 },
       );
+    }
+
+    if (body.action === "get-connection") {
+      return NextResponse.json(await getDatabaseConnection(body.database));
     }
 
     if (body.action === "rotate-password") {
