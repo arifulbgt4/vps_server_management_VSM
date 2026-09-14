@@ -32,6 +32,8 @@ services:
       REDIS_APP_HOST: redis
       REDIS_APP_PORT: 6379
       REDIS_APP_DATABASE: 0
+      REDIS_PUBLIC_HOST: ${REDIS_PUBLIC_HOST:-redis.openmusk.store}
+      REDIS_PUBLIC_PORT: ${REDIS_PUBLIC_PORT:-6380}
       DOCKER_AGENT_URL: http://docker-agent:8080
       DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
     ports:
