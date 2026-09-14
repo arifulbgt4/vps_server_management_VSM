@@ -59,6 +59,7 @@ services:
     image: mongo:${MONGO_VERSION:-8.0}
     container_name: platform-mongodb-init
     restart: "no"
+    user: "0:0"
     depends_on:
       mongodb:
         condition: service_healthy
