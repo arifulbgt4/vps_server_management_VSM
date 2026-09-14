@@ -7,15 +7,16 @@ Current production components:
 ```text
 Platform Admin         Next.js management UI
 PostgreSQL             shared database service with public TLS
-Redis                  shared cache/service with private 6379 + public TLS 6380
+Redis                  shared cache/queue service with private 6379 + public TLS 6380
+n8n main               editor/API/webhook process
+n8n worker             Redis queue worker for workflow execution
+Media Storage          multi-user file storage with quotas, API keys and hard deletion
 Docker control agent   private allowlisted lifecycle/metrics/resource controller
 Nginx + Certbot        HTTPS and certificate lifecycle
 DOCKER-USER firewall   explicit Docker published-port policy
-n8n                    production workflow automation using shared PostgreSQL
-Media Storage          multi-user file storage with quotas, API keys and hard deletion
 ```
 
-Primary runtime layout on the VPS:
+Primary runtime layout:
 
 ```text
 /srv/
@@ -32,7 +33,7 @@ Primary runtime layout on the VPS:
 
 ## Documentation
 
-The complete VPS setup, security model, deployment procedure, verification commands, certificate renewal, firewall policy, and troubleshooting history are documented here:
+Complete production architecture, security rules, deployment procedures, verification, queue mode, Media Storage, scaling and troubleshooting:
 
 **[docs/PRODUCTION_SETUP.md](docs/PRODUCTION_SETUP.md)**
 
@@ -44,9 +45,9 @@ Application-specific documentation:
 
 **[srv/apps/media-service/README.md](srv/apps/media-service/README.md)**
 
-Documentation uses `example.com` as a placeholder domain. Replace it with the real production domain only in VPS runtime configuration.
+Documentation uses `example.com` as a placeholder domain. Replace it with real production domains only in VPS runtime configuration.
 
-## Current Platform Admin
+## Platform Admin
 
 Runtime path:
 
@@ -75,17 +76,30 @@ Management modules:
 /media
 ```
 
-## n8n app
+The credential vault uses AES-256-GCM. Media user API keys can be shown/hidden from the authenticated Media manager because Platform Admin stores an encrypted copy while the Media Service itself stores only the API-key hash.
 
-Tracked production scaffold:
+## n8n queue mode
+
+Tracked production stack:
 
 ```text
 srv/apps/n8n/
 ```
 
-The n8n stack uses a dedicated PostgreSQL database/user on the shared `postgres_net`, stores its encryption key and DB password outside Git, binds port `5678` to localhost only, and is intended to be exposed through host Nginx + HTTPS. It is also attached to `media_net` so workflows can fetch media binaries directly from `http://media-service:8080`.
+n8n runs permanently in Redis queue mode:
 
-## Media Storage service
+```text
+n8n main    -> editor/API/webhooks
+Redis       -> execution queue
+n8n-worker  -> workflow execution, initial concurrency 5
+PostgreSQL  -> persistent n8n data
+```
+
+The main process binds only to `127.0.0.1:5678`; the worker publishes no host port. Both main and worker use `postgres_net`, `redis_net` and `media_net` and share the same persistent n8n encryption key.
+
+Queue Redis uses a dedicated ACL identity such as `n8n_queue` rather than `platform_controller`.
+
+## Media Storage
 
 Tracked production service:
 
@@ -93,8 +107,34 @@ Tracked production service:
 srv/apps/media-service/
 ```
 
-The service stores physical files under `/srv/apps/media-service/storage`, stores ownership/quota/file metadata in a dedicated PostgreSQL database, exposes public traffic only through localhost + Nginx, and exposes a private admin/application endpoint on `media_net`.
+The service stores physical files under `/srv/apps/media-service/storage` and ownership/quota/file metadata in its dedicated PostgreSQL database.
 
-Each media user has an independent bearer API key and optional quota. Deleting a file removes its database metadata and physical file. Deleting a user removes all owned files and metadata.
+Capabilities include:
 
-Do not commit any file from a `secrets/` directory, private key, password, bearer token, credential-vault master key, n8n encryption key, media admin token, or generated application credential.
+```text
+per-user API keys
+per-user GiB quotas
+used/available usage tracking
+image/video/audio/PDF/document/archive support
+private binary endpoint for n8n
+optional public file URLs
+hard file deletion
+hard user + all-owned-files deletion
+host free-space reserve
+```
+
+Platform Admin reaches the private media admin API through `media_net`. n8n reaches media binaries directly through:
+
+```text
+http://media-service:8080
+```
+
+## Load balancing
+
+A separate load balancer is not required for the current single-VPS deployment. Host Nginx handles reverse proxying and TLS, while Redis distributes n8n execution jobs to workers.
+
+Add HTTP load balancing only after deploying multiple HTTP-facing instances, and add an external/cloud load balancer when moving to multiple VPS nodes or high availability.
+
+## Secrets
+
+Do not commit any file from a `secrets/` directory, private key, password, bearer token, Redis credential, credential-vault master key, n8n encryption key, media admin token, or generated application credential.
