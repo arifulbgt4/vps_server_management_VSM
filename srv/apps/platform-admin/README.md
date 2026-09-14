@@ -2,7 +2,7 @@
 
 Minimal Next.js control panel for independently managed VPS services.
 
-Current version: `0.3.0`
+Current version: `0.4.0`
 
 ## Authentication
 
@@ -17,7 +17,7 @@ Secrets are stored only on the VPS:
 
 The default username is `admin`. Override it with `ADMIN_USERNAME` in a local `.env` file if needed.
 
-Create authentication secrets before starting the v0.3 container:
+Create authentication secrets before starting the container:
 
 ```bash
 cd /srv/apps/platform-admin
@@ -35,7 +35,7 @@ openssl rand -hex 32 > secrets/auth_session_secret
 chmod 600 secrets/admin_password_hash secrets/auth_session_secret
 ```
 
-While the app is available only through local HTTP/SSH tunneling, leave `AUTH_COOKIE_SECURE=false` (the Compose default). After HTTPS is enabled, set `AUTH_COOKIE_SECURE=true`.
+With HTTPS enabled, set `AUTH_COOKIE_SECURE=true` in the local `.env` file.
 
 ## Current modules
 
@@ -43,14 +43,15 @@ While the app is available only through local HTTP/SSH tunneling, leave `AUTH_CO
 
 Available at `/postgres` after login:
 
-- list databases;
-- list roles;
-- create a database and login role;
-- set the application role as database owner;
-- generate a strong password server-side;
+- list databases and roles;
+- create a database with a new dedicated login user;
+- create a database using an existing login user;
+- set the selected application role as database owner;
+- generate strong passwords server-side;
 - rotate a role password;
-- delete a database and its role;
-- show the generated password once in the UI.
+- delete a database only, or explicitly delete the database and role together;
+- generate a remote PostgreSQL URL after password creation/rotation;
+- hide the password and remote URL by default and reveal them only on request.
 
 The application connects to PostgreSQL over the private `postgres_net` Docker network. The privileged `platform_controller` password is read from:
 
@@ -59,6 +60,26 @@ The application connects to PostgreSQL over the private `postgres_net` Docker ne
 ```
 
 All PostgreSQL management APIs require an authenticated Platform Admin session.
+
+### Remote PostgreSQL URL
+
+Compose exposes these configuration values to Platform Admin:
+
+```text
+PG_PUBLIC_HOST=db.openmusk.store
+PG_PUBLIC_PORT=5432
+PG_PUBLIC_SSLMODE=require
+```
+
+The generated URL format is:
+
+```text
+postgresql://USER:PASSWORD@db.openmusk.store:5432/DATABASE?sslmode=require
+```
+
+Platform Admin never attempts to recover an existing PostgreSQL password because PostgreSQL does not store reversible plaintext passwords. When creating a database for an existing user, its password is preserved. Rotate that user's password from the UI if a fresh one-time URL is needed.
+
+Generating the URL does not itself open PostgreSQL to the Internet. DNS, the Contabo firewall, Docker-compatible host firewall policy, PostgreSQL TLS and `pg_hba.conf` must also allow the intended remote source.
 
 ## VPS path
 
@@ -106,14 +127,6 @@ curl -i http://127.0.0.1:3000/api/postgres
 
 Without a session, `/api/postgres` should return HTTP `401 Unauthorized`.
 
-For browser testing without public exposure, create an SSH tunnel from your local machine:
-
-```bash
-ssh -L 3300:127.0.0.1:3000 contabo
-```
-
-Then open `http://127.0.0.1:3300/login` locally.
-
 ## Required external Docker networks
 
 ```bash
@@ -128,4 +141,5 @@ docker network inspect postgres_net >/dev/null 2>&1 || docker network create pos
 - The session cookie is HttpOnly and SameSite=Strict.
 - PostgreSQL management operations run server-side only.
 - The PostgreSQL controller password is never sent to the browser.
-- Enable the cookie `Secure` flag when HTTPS is added.
+- Generated database passwords are shown only as one-time UI state and are not stored by Platform Admin.
+- Public PostgreSQL access should be source-restricted whenever possible.
