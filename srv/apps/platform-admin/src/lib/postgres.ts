@@ -1,5 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import {
+  credentialUsers,
+  deleteCredential,
+  getCredential,
+  setCredential,
+} from "@/lib/credential-vault";
 
 const { Pool } = require("pg");
 
@@ -64,24 +70,19 @@ function generatedPassword() {
   return randomBytes(24).toString("base64url");
 }
 
-function publicConnection(database: string, role: string, password?: string) {
+function publicConnection(database: string, role: string, password: string) {
   const host = process.env.PG_PUBLIC_HOST?.trim();
   if (!host) return null;
 
   const port = Number(process.env.PG_PUBLIC_PORT || 5432);
   const sslmode = process.env.PG_PUBLIC_SSLMODE || "require";
-  const base = {
+
+  return {
     host,
     port,
     sslmode,
     database,
     role,
-  };
-
-  if (!password) return base;
-
-  return {
-    ...base,
     url: `postgresql://${encodeURIComponent(role)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?sslmode=${encodeURIComponent(sslmode)}`,
   };
 }
@@ -108,7 +109,7 @@ async function ensureControllerCanSetRole(client: any, role: string) {
 
 export async function listPostgresResources() {
   const db = getPool();
-  const [databases, roles] = await Promise.all([
+  const [databases, roles, storedUsers] = await Promise.all([
     db.query(`
       SELECT
         datname AS name,
@@ -129,10 +130,15 @@ export async function listPostgresResources() {
       WHERE rolname !~ '^pg_'
       ORDER BY rolname
     `),
+    credentialUsers("postgres"),
   ]);
 
   return {
-    databases: databases.rows,
+    databases: databases.rows.map((row: any) => ({
+      ...row,
+      credential_available:
+        !RESERVED_DATABASES.has(row.name) && storedUsers.has(row.owner),
+    })),
     roles: roles.rows,
   };
 }
@@ -142,6 +148,7 @@ export async function createDatabaseWithRole(databaseInput: unknown, roleInput: 
   const role = assertName(roleInput, "role");
   const password = generatedPassword();
   const client = await getPool().connect();
+  let roleCreated = false;
 
   try {
     const existingDb = await client.query(
@@ -159,14 +166,17 @@ export async function createDatabaseWithRole(databaseInput: unknown, roleInput: 
     await client.query(
       `CREATE ROLE ${ident(role)} LOGIN PASSWORD ${literal(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`,
     );
+    roleCreated = true;
 
-    try {
-      await ensureControllerCanSetRole(client, role);
-      await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
-    } catch (error) {
-      await client.query(`DROP ROLE IF EXISTS ${ident(role)}`);
-      throw error;
+    await setCredential("postgres", role, password);
+    await ensureControllerCanSetRole(client, role);
+    await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
+  } catch (error) {
+    await deleteCredential("postgres", role).catch(() => undefined);
+    if (roleCreated) {
+      await client.query(`DROP ROLE IF EXISTS ${ident(role)}`).catch(() => undefined);
     }
+    throw error;
   } finally {
     client.release();
   }
@@ -200,7 +210,9 @@ export async function createDatabaseForExistingRole(
     );
     if (!roleResult.rowCount) throw new Error(`Role ${role} does not exist`);
     if (!roleResult.rows[0].rolcanlogin) throw new Error(`Role ${role} cannot login`);
-    if (roleResult.rows[0].rolsuper) throw new Error("Superuser roles cannot be assigned through this UI");
+    if (roleResult.rows[0].rolsuper) {
+      throw new Error("Superuser roles cannot be assigned through this UI");
+    }
 
     await ensureControllerCanSetRole(client, role);
     await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
@@ -211,7 +223,41 @@ export async function createDatabaseForExistingRole(
   return {
     database,
     role,
-    connection: publicConnection(database, role),
+    credential_available: Boolean(await getCredential("postgres", role)),
+  };
+}
+
+export async function getDatabaseConnection(databaseInput: unknown) {
+  const database = assertName(databaseInput, "database");
+  const db = getPool();
+
+  const result = await db.query(
+    `
+      SELECT pg_get_userbyid(datdba) AS owner
+      FROM pg_database
+      WHERE datname = $1 AND datistemplate = false
+    `,
+    [database],
+  );
+
+  if (!result.rowCount) throw new Error(`Database ${database} does not exist`);
+  const role = result.rows[0].owner as string;
+  if (RESERVED_ROLES.has(role)) {
+    throw new Error("System database credentials are not exposed");
+  }
+
+  const password = await getCredential("postgres", role);
+  if (!password) {
+    throw new Error(
+      `Password for ${role} is not stored in the encrypted vault. Rotate that user's password once to enable URL reveal.`,
+    );
+  }
+
+  return {
+    database,
+    role,
+    password,
+    connection: publicConnection(database, role, password),
   };
 }
 
@@ -238,10 +284,19 @@ export async function rotateRolePassword(
   }
 
   await db.query(`ALTER ROLE ${ident(role)} PASSWORD ${literal(password)}`);
+
+  let credentialStored = true;
+  try {
+    await setCredential("postgres", role, password);
+  } catch {
+    credentialStored = false;
+  }
+
   return {
     role,
     database,
     password,
+    credential_stored: credentialStored,
     connection: database ? publicConnection(database, role, password) : null,
   };
 }
@@ -260,6 +315,7 @@ export async function deleteDatabaseAndRole(databaseInput: unknown, roleInput: u
 
   await db.query(`DROP DATABASE IF EXISTS ${ident(database)} WITH (FORCE)`);
   await db.query(`DROP ROLE IF EXISTS ${ident(role)}`);
+  await deleteCredential("postgres", role);
 
   return { database, role };
 }
