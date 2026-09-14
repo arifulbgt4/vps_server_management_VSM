@@ -3,17 +3,19 @@
 This document records the production setup currently used for the VSM server: hardened SSH access, Docker networking, Nginx/HTTPS, PostgreSQL public TLS access, Redis private/public TLS access, Platform Admin, the private Docker control agent, firewall rules, certificate renewal, resource limits, verification commands, and the issues encountered while building the system.
 
 > Never commit real passwords, private keys, bearer tokens, or generated application credentials. All examples below use placeholders.
+>
+> Domain examples use the reserved documentation domain `example.com`. Replace `example.com` with your actual domain in production.
 
 ## 1. Current deployment
 
 The production host is a Contabo VPS running Ubuntu 24.04 LTS with Docker Engine and Docker Compose. The application architecture is intentionally split into independent infrastructure and application stacks under `/srv`.
 
-Production domains:
+Example production domains:
 
 ```text
-admin.openmusk.store   -> Platform Admin over HTTPS
-db.openmusk.store      -> PostgreSQL TLS on 5432
-redis.openmusk.store   -> Redis TLS on 6380
+admin.example.com   -> Platform Admin over HTTPS
+db.example.com      -> PostgreSQL TLS on 5432
+redis.example.com   -> Redis TLS on 6380
 ```
 
 Public ports intentionally exposed:
@@ -157,13 +159,13 @@ Platform Admin runs in Docker but only publishes to localhost:
 127.0.0.1:3000 -> platform-admin:3000
 ```
 
-Host Nginx terminates HTTPS for `admin.openmusk.store` and proxies to `127.0.0.1:3000`.
+Host Nginx terminates HTTPS for `admin.example.com` and proxies to `127.0.0.1:3000`.
 
 Typical Nginx proxy block:
 
 ```nginx
 server {
-    server_name admin.openmusk.store;
+    server_name admin.example.com;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -179,7 +181,7 @@ server {
 Issue a certificate with Certbot:
 
 ```bash
-sudo certbot --nginx -d admin.openmusk.store
+sudo certbot --nginx -d admin.example.com
 ```
 
 After HTTPS is active, Platform Admin must use:
@@ -289,7 +291,7 @@ ssl_min_protocol_version = TLSv1.2
 Public connection format:
 
 ```text
-postgresql://USER:PASSWORD@db.openmusk.store:5432/DATABASE?sslmode=verify-full
+postgresql://USER:PASSWORD@db.example.com:5432/DATABASE?sslmode=verify-full
 ```
 
 Use `verify-full`, not only `require`, for production clients that support it.
@@ -322,10 +324,10 @@ docker exec platform-postgres \
 
 ### PostgreSQL Let's Encrypt certificate
 
-Certificate domain:
+Example certificate domain:
 
 ```text
-db.openmusk.store
+db.example.com
 ```
 
 Tracked deploy script:
@@ -369,7 +371,7 @@ From another machine:
 docker run --rm -it \
   -e PGPASSWORD \
   postgres:17-alpine \
-  psql "host=db.openmusk.store port=5432 dbname=YOUR_DB user=YOUR_USER sslmode=verify-full sslrootcert=system"
+  psql "host=db.example.com port=5432 dbname=YOUR_DB user=YOUR_USER sslmode=verify-full sslrootcert=system"
 ```
 
 Inside `psql`:
@@ -430,7 +432,7 @@ redis://USER:PASSWORD@redis:6379/0
 Public TLS URL:
 
 ```text
-rediss://USER:PASSWORD@redis.openmusk.store:6380/0
+rediss://USER:PASSWORD@redis.example.com:6380/0
 ```
 
 ### Redis TLS
@@ -460,7 +462,7 @@ Renewal hook:
   -> /usr/local/sbin/deploy-redis-cert.sh
 ```
 
-The deploy script copies the Let's Encrypt certificate for `redis.openmusk.store` into the Redis TLS directory and restarts Redis after certificate renewal.
+The deploy script copies the Let's Encrypt certificate for `redis.example.com` into the Redis TLS directory and restarts Redis after certificate renewal.
 
 ### Redis verification
 
@@ -468,9 +470,9 @@ Certificate hostname check:
 
 ```bash
 openssl s_client \
-  -connect redis.openmusk.store:6380 \
-  -servername redis.openmusk.store \
-  -verify_hostname redis.openmusk.store \
+  -connect redis.example.com:6380 \
+  -servername redis.example.com \
+  -verify_hostname redis.example.com \
   -verify_return_error \
   </dev/null
 ```
@@ -494,7 +496,7 @@ docker run --rm -it \
   redis-cli \
     --tls \
     --cacert /etc/ssl/certs/ca-certificates.crt \
-    -h redis.openmusk.store \
+    -h redis.example.com \
     -p 6380 \
     --user YOUR_REDIS_USER \
     PING
@@ -511,7 +513,7 @@ PONG
 Plaintext public Redis must fail:
 
 ```bash
-nc -vz -w 3 redis.openmusk.store 6379
+nc -vz -w 3 redis.example.com 6379
 ```
 
 Expected: timeout/refused.
@@ -796,19 +798,19 @@ sudo certbot renew --dry-run
 Public PostgreSQL:
 
 ```bash
-nc -vz db.openmusk.store 5432
+nc -vz db.example.com 5432
 ```
 
 Public Redis TLS:
 
 ```bash
-nc -vz redis.openmusk.store 6380
+nc -vz redis.example.com 6380
 ```
 
 Public Redis plaintext must remain blocked:
 
 ```bash
-nc -vz -w 3 redis.openmusk.store 6379
+nc -vz -w 3 redis.example.com 6379
 ```
 
 ## 16. Problems encountered and fixes
