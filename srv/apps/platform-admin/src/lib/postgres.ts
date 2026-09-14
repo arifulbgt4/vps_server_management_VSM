@@ -34,17 +34,24 @@ function getPool() {
   return pool;
 }
 
-function assertName(name: unknown, kind: "database" | "role") {
+function assertIdentifier(name: unknown, kind: "database" | "role") {
   if (typeof name !== "string" || !/^[a-z][a-z0-9_]{2,62}$/.test(name)) {
     throw new Error(`${kind} name must match ^[a-z][a-z0-9_]{2,62}$`);
   }
-  if (kind === "database" && RESERVED_DATABASES.has(name)) {
-    throw new Error(`Database ${name} is reserved`);
-  }
-  if (kind === "role" && RESERVED_ROLES.has(name)) {
-    throw new Error(`Role ${name} is reserved`);
-  }
   return name;
+}
+
+function assertName(name: unknown, kind: "database" | "role") {
+  const validated = assertIdentifier(name, kind);
+
+  if (kind === "database" && RESERVED_DATABASES.has(validated)) {
+    throw new Error(`Database ${validated} is reserved`);
+  }
+  if (kind === "role" && RESERVED_ROLES.has(validated)) {
+    throw new Error(`Role ${validated} is reserved`);
+  }
+
+  return validated;
 }
 
 function ident(value: string) {
@@ -93,7 +100,11 @@ export async function listPostgresResources() {
 export async function createDatabaseWithRole(databaseInput: unknown, roleInput: unknown) {
   const database = assertName(databaseInput, "database");
   const role = assertName(roleInput, "role");
-  const controller = assertName(controllerRole(), "role");
+
+  // The controller is intentionally a reserved internal role. Validate only
+  // its identifier syntax here; do not reject it for being reserved.
+  const controller = assertIdentifier(controllerRole(), "role");
+
   const password = generatedPassword();
   const client = await getPool().connect();
 
