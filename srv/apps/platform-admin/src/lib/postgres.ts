@@ -14,13 +14,17 @@ function getPassword() {
   return readFileSync(path, "utf8").trim();
 }
 
+function controllerRole() {
+  return process.env.PGUSER || "platform_controller";
+}
+
 function getPool() {
   if (!pool) {
     pool = new Pool({
       host: process.env.PGHOST || "postgres",
       port: Number(process.env.PGPORT || 5432),
       database: process.env.PGDATABASE || "postgres",
-      user: process.env.PGUSER || "platform_controller",
+      user: controllerRole(),
       password: getPassword(),
       max: 5,
       idleTimeoutMillis: 30000,
@@ -89,6 +93,7 @@ export async function listPostgresResources() {
 export async function createDatabaseWithRole(databaseInput: unknown, roleInput: unknown) {
   const database = assertName(databaseInput, "database");
   const role = assertName(roleInput, "role");
+  const controller = assertName(controllerRole(), "role");
   const password = generatedPassword();
   const client = await getPool().connect();
 
@@ -104,9 +109,13 @@ export async function createDatabaseWithRole(databaseInput: unknown, roleInput: 
     );
 
     try {
-      // PostgreSQL 17 automatically grants the CREATEROLE creator ADMIN membership
-      // in a role it creates. That allows platform_controller to SET ROLE to the
-      // new role and create the database with the application role as owner.
+      // PostgreSQL 17 gives a CREATEROLE user ADMIN membership on roles it creates,
+      // but creating a database owned by another role specifically requires SET ROLE.
+      // Enable SET only for the controller's membership before assigning ownership.
+      await client.query(
+        `GRANT ${ident(role)} TO ${ident(controller)} WITH SET TRUE`,
+      );
+
       await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(role)}`);
     } catch (error) {
       await client.query(`DROP ROLE IF EXISTS ${ident(role)}`);
