@@ -84,7 +84,10 @@ services:
 
     networks:
       postgres_net:
+      media_net:
 
 networks:
   postgres_net:
+    external: true
+  media_net:
     external: true
