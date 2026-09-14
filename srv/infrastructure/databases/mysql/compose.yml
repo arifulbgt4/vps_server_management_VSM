@@ -44,6 +44,7 @@ services:
     image: mysql:${MYSQL_VERSION:-8.4}
     container_name: platform-mysql-init
     restart: "no"
+    user: "0:0"
     depends_on:
       mysql:
         condition: service_healthy
