@@ -41,10 +41,14 @@ services:
         source: /proc
         target: /host/proc
         read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: /srv
         target: /host/storage
         read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp
