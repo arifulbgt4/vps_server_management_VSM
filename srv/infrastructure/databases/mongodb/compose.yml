@@ -7,7 +7,15 @@ services:
       TZ: ${TZ:-Asia/Dhaka}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
       MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/root_password
-    command: ["mongod", "--config", "/etc/mongod.conf"]
+    command:
+      - mongod
+      - --config
+      - /etc/mongod.conf
+      - --replSet
+      - ${MONGO_REPLICA_SET:-rs0}
+      - --auth
+      - --keyFile
+      - /run/secrets/replica_keyfile
     volumes:
       - type: bind
         source: ./data
