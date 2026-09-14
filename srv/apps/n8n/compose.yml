@@ -104,6 +104,8 @@ services:
     networks:
       postgres_net:
       redis_net:
+      mysql_net:
+      mongo_net:
       media_net:
 
   n8n-worker:
@@ -190,12 +192,18 @@ services:
     networks:
       postgres_net:
       redis_net:
+      mysql_net:
+      mongo_net:
       media_net:
 
 networks:
   postgres_net:
     external: true
   redis_net:
+    external: true
+  mysql_net:
+    external: true
+  mongo_net:
     external: true
   media_net:
     external: true
