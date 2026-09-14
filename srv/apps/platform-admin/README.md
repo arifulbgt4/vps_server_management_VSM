@@ -8,103 +8,101 @@ Current version: `0.4.0`
 
 Platform Admin uses one local administrator account, a scrypt password hash and an HMAC-signed 12-hour session cookie.
 
-Secrets are stored only on the VPS:
+Local secrets live only on the VPS under:
 
 ```text
-/srv/apps/platform-admin/secrets/admin_password_hash
-/srv/apps/platform-admin/secrets/auth_session_secret
+/srv/apps/platform-admin/secrets/
 ```
 
-The default username is `admin`. Override it with `ADMIN_USERNAME` in a local `.env` file if needed.
+With HTTPS enabled, set `AUTH_COOKIE_SECURE=true` in `.env`.
 
-Create authentication secrets before starting the container:
+## Encrypted credential vault
+
+Platform Admin can persist application credentials so connection URLs can be revealed later without keeping plaintext passwords in the database.
+
+The vault uses AES-256-GCM. Its master key is stored only on the VPS:
+
+```text
+/srv/apps/platform-admin/secrets/credential_vault_key
+```
+
+Create it once with:
 
 ```bash
-cd /srv/apps/platform-admin
-mkdir -p secrets
-chmod 700 secrets
-
-read -s -p "Admin password: " ADMIN_PASSWORD; echo
-printf '%s' "$ADMIN_PASSWORD" | docker run --rm -i \
-  -v "$PWD/scripts/hash-password.mjs:/tmp/hash-password.mjs:ro" \
-  node:22-alpine node /tmp/hash-password.mjs \
-  > secrets/admin_password_hash
-unset ADMIN_PASSWORD
-
-openssl rand -hex 32 > secrets/auth_session_secret
-chmod 600 secrets/admin_password_hash secrets/auth_session_secret
+openssl rand -hex 32 > /srv/apps/platform-admin/secrets/credential_vault_key
+chmod 600 /srv/apps/platform-admin/secrets/credential_vault_key
 ```
 
-With HTTPS enabled, set `AUTH_COOKIE_SECURE=true` in the local `.env` file.
+Encrypted credential rows are stored in the `platform_admin` PostgreSQL database through the unprivileged `platform_app` role.
 
-## Current modules
-
-### PostgreSQL
+## PostgreSQL
 
 Available at `/postgres` after login:
 
 - list databases and roles;
-- create a database with a new dedicated login user;
-- create a database using an existing login user;
-- set the selected application role as database owner;
-- generate strong passwords server-side;
-- rotate a role password;
-- delete a database only, or explicitly delete the database and role together;
-- generate a remote PostgreSQL URL after password creation/rotation;
-- hide the password and remote URL by default and reveal them only on request.
+- create DB + new dedicated user;
+- create DB using an existing user;
+- rotate passwords;
+- delete a database only, or explicitly delete its user too;
+- reveal/hide a full remote PostgreSQL URL from each database row when a stored credential is available.
 
-The application connects to PostgreSQL over the private `postgres_net` Docker network. The privileged `platform_controller` password is read from:
+Newly generated or rotated PostgreSQL passwords are stored encrypted in the credential vault. Passwords that existed before the vault was introduced cannot be recovered; rotate those users once to enable URL reveal.
 
-```text
-/srv/infrastructure/databases/postgres/secrets/platform_controller_password
-```
-
-All PostgreSQL management APIs require an authenticated Platform Admin session.
-
-### Remote PostgreSQL URL
-
-Compose exposes these configuration values to Platform Admin:
-
-```text
-PG_PUBLIC_HOST=db.openmusk.store
-PG_PUBLIC_PORT=5432
-PG_PUBLIC_SSLMODE=require
-```
-
-The generated URL format is:
+Remote URL format:
 
 ```text
 postgresql://USER:PASSWORD@db.openmusk.store:5432/DATABASE?sslmode=require
 ```
 
-Platform Admin never attempts to recover an existing PostgreSQL password because PostgreSQL does not store reversible plaintext passwords. When creating a database for an existing user, its password is preserved. Rotate that user's password from the UI if a fresh one-time URL is needed.
+Generating a URL does not itself open PostgreSQL to the Internet. DNS, Contabo firewall policy, Docker-compatible host firewall policy, TLS and `pg_hba.conf` still need to allow the intended remote connection.
 
-Generating the URL does not itself open PostgreSQL to the Internet. DNS, the Contabo firewall, Docker-compatible host firewall policy, PostgreSQL TLS and `pg_hba.conf` must also allow the intended remote source.
+## Redis
 
-## VPS path
+Available at `/redis` after the shared Redis service is started:
+
+- Redis health/status;
+- list ACL users;
+- create application ACL users;
+- generate and rotate passwords;
+- delete application ACL users;
+- reveal/hide private Redis connection URLs from the user list.
+
+Application Redis URLs use the private Docker network:
 
 ```text
-/srv/apps/platform-admin
+redis://USER:PASSWORD@redis:6379/0
 ```
 
-## Deploy / update on the VPS
+Do not expose Redis port 6379 publicly by default. Same-VPS application containers should join `redis_net`.
+
+Shared Redis runtime path:
+
+```text
+/srv/infrastructure/cache/redis
+```
+
+## Required secret mounts
+
+Platform Admin expects:
+
+```text
+/srv/infrastructure/databases/postgres/secrets/platform_controller_password
+/srv/infrastructure/databases/postgres/secrets/platform_app_password
+/srv/infrastructure/cache/redis/secrets/platform_controller_password
+/srv/apps/platform-admin/secrets/admin_password_hash
+/srv/apps/platform-admin/secrets/auth_session_secret
+/srv/apps/platform-admin/secrets/credential_vault_key
+```
+
+## Required Docker networks
 
 ```bash
-cd /tmp
-rm -rf vps_server_management_VSM
-git clone https://github.com/arifulbgt4/vps_server_management_VSM.git
-mkdir -p /srv/apps/platform-admin
-cp -a /tmp/vps_server_management_VSM/srv/apps/platform-admin/. /srv/apps/platform-admin/
-cd /srv/apps/platform-admin
+docker network inspect proxy_net >/dev/null 2>&1 || docker network create proxy_net
+docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
+docker network inspect redis_net >/dev/null 2>&1 || docker network create redis_net
 ```
 
-Create the authentication secrets as described above, then:
-
-```bash
-docker compose up -d --build
-```
-
-For later updates:
+## Update on VPS
 
 ```bash
 cd /tmp/vps_server_management_VSM
@@ -114,32 +112,10 @@ cd /srv/apps/platform-admin
 docker compose up -d --build
 ```
 
-The local `secrets/` directory is ignored by Git and is not deleted by the copy command above.
-
-## Check
-
-```bash
-docker compose ps
-docker logs platform-admin --tail 50
-curl http://127.0.0.1:3000/api/health
-curl -i http://127.0.0.1:3000/api/postgres
-```
-
-Without a session, `/api/postgres` should return HTTP `401 Unauthorized`.
-
-## Required external Docker networks
-
-```bash
-docker network inspect proxy_net >/dev/null 2>&1 || docker network create proxy_net
-docker network inspect postgres_net >/dev/null 2>&1 || docker network create postgres_net
-```
-
 ## Security
 
-- Port 3000 remains bound to `127.0.0.1` only.
-- Password hashes and session signing keys are not committed to Git.
-- The session cookie is HttpOnly and SameSite=Strict.
-- PostgreSQL management operations run server-side only.
-- The PostgreSQL controller password is never sent to the browser.
-- Generated database passwords are shown only as one-time UI state and are not stored by Platform Admin.
-- Public PostgreSQL access should be source-restricted whenever possible.
+- Port 3000 stays bound to `127.0.0.1` only.
+- Admin authentication is required for management APIs.
+- Credential secrets are encrypted at rest with a VPS-only master key.
+- PostgreSQL controller and Redis controller credentials are never exposed to the browser.
+- Connection passwords are decrypted server-side only after an authenticated explicit reveal request.
