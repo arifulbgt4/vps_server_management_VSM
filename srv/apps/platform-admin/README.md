@@ -4,17 +4,17 @@ Authenticated Next.js control panel for independently managed VPS services.
 
 Current version: `0.9.0`
 
-For the full VPS build, networking, TLS, firewall, deployment and troubleshooting history, see:
+For the complete VPS build, networking, TLS, queue mode, Media Storage, firewall, deployment and troubleshooting guide, see:
 
 ```text
 docs/PRODUCTION_SETUP.md
 ```
 
-> Documentation uses `example.com` as a placeholder domain. Replace it with your real domain in production configuration.
+> Documentation uses `example.com` as a placeholder domain. Replace it with real production domains only in VPS runtime configuration.
 
 ## Authentication
 
-Platform Admin uses one local administrator account, a scrypt password hash and an HMAC-signed 12-hour session cookie.
+Platform Admin uses one local administrator account, a scrypt password hash and an HMAC-signed session cookie.
 
 Local secrets live only on the VPS under:
 
@@ -30,7 +30,7 @@ AUTH_COOKIE_SECURE=true
 
 ## Encrypted credential vault
 
-Platform Admin can persist application credentials so connection URLs can be revealed later without storing plaintext passwords in the database.
+Platform Admin persists recoverable application credentials only in encrypted form.
 
 The vault uses AES-256-GCM. Its master key is stored only on the VPS:
 
@@ -38,7 +38,9 @@ The vault uses AES-256-GCM. Its master key is stored only on the VPS:
 /srv/apps/platform-admin/secrets/credential_vault_key
 ```
 
-Encrypted credential rows are stored in the `platform_admin` PostgreSQL database through the unprivileged `platform_app` role.
+Encrypted rows are stored in the `platform_admin` PostgreSQL database through the unprivileged `platform_app` role.
+
+The vault is used for PostgreSQL/Redis credential reveal and for Media user API keys that need authenticated Show/Hide behavior in the UI.
 
 ## PostgreSQL manager
 
@@ -57,7 +59,7 @@ reveal/hide stored remote connection URLs
 copy connection URL
 ```
 
-Managed application databases revoke public CONNECT/TEMPORARY privileges and use the selected owner role as the intended application identity.
+Managed application databases use unprivileged application owners.
 
 Public connection format:
 
@@ -65,7 +67,7 @@ Public connection format:
 postgresql://USER:PASSWORD@db.example.com:5432/DATABASE?sslmode=verify-full
 ```
 
-Public PostgreSQL uses PostgreSQL's own TLS endpoint with a CA-trusted certificate, SCRAM authentication, hardened `pg_hba.conf`, the provider firewall and the host `DOCKER-USER` policy.
+Same-VPS applications should prefer the private `postgres_net` endpoint `postgres:5432`.
 
 ## Redis manager
 
@@ -95,21 +97,29 @@ Public TLS URL:
 rediss://USER:PASSWORD@redis.example.com:6380/0
 ```
 
-Redis port `6379` is not exposed publicly.
+Redis port `6379` is private.
+
+n8n queue mode uses a dedicated Redis ACL user such as:
+
+```text
+n8n_queue
+```
+
+Do not use `platform_controller` for n8n workflow queue traffic.
 
 ## Docker Services manager
 
 Available at `/docker`.
 
-Platform Admin does not mount `/var/run/docker.sock`. A separate `platform-docker-agent` container owns the socket on private `management_net`, requires a bearer token, and only manages exact names in `DOCKER_AGENT_ALLOWLIST`.
+Platform Admin never mounts `/var/run/docker.sock`. A separate `platform-docker-agent` owns the socket on private `management_net`, requires a bearer token, and manages only exact allowlisted containers.
 
-Current Docker UI features:
+Current UI features:
 
 ```text
 host total/used/available CPU
 host total/used/available RAM
-host total/used/available disk space for the filesystem backing /srv
-state and health
+host total/used/available disk for the filesystem backing /srv
+container state and health
 container CPU usage %
 container RAM usage and %
 uptime
@@ -124,15 +134,24 @@ RAM limit %
 persistent resource-limit policy
 ```
 
-Host CPU/RAM metrics are read from the VPS host `/proc`. Disk capacity/usage is measured from the host filesystem backing `/srv`. These host paths are mounted read-only into the private Docker agent.
+Current default allowlist includes:
 
-Metrics refresh automatically approximately every 10 seconds.
+```text
+platform-admin
+platform-postgres
+platform-redis
+n8n
+n8n-worker
+platform-media
+```
+
+Metrics refresh approximately every 10 seconds.
 
 ### Resource limits
 
 CPU and RAM limits are percentages of the entire VPS.
 
-For a 4-CPU host:
+For a 4-vCPU host:
 
 ```text
 10% CPU = 0.40 CPU
@@ -141,37 +160,21 @@ For a 4-CPU host:
 100% CPU = 4.00 CPU
 ```
 
-CPU input range:
-
-```text
-1% - 100%
-```
-
-RAM input range:
-
-```text
-0.5% - 95%
-```
-
-Blank means unlimited.
-
-The agent uses Docker cgroup resource controls and verifies the applied limits after the update. RAM limits below current cgroup usage are rejected.
-
-Persistent policies are stored on the VPS at:
+Persistent policies are stored at:
 
 ```text
 /srv/infrastructure/management/docker-agent/data/resource-limits.json
 ```
 
-The agent periodically reconciles these policies so they are restored after an allowlisted container is recreated.
+The agent periodically reconciles stored policies after container recreation.
 
 ## Media Storage manager
 
 Available at `/media`.
 
-Platform Admin connects to the media service through the private `media_net` and never exposes the media admin token to the browser.
+Platform Admin connects to Media Storage through private `media_net` and never sends the media admin token to browser code.
 
-Current Media UI features:
+Current UI features:
 
 ```text
 overall media user count
@@ -181,22 +184,45 @@ create media users
 individual user storage quota in GiB
 used / quota / available per user
 enable or disable users
-rotate user API keys
+rotate API keys
+masked API keys by default
+Show key / Hide key / Copy key for vault-backed keys
 list a user's files
 show public file URL when available
 permanent file deletion
 permanent user + all-files deletion
+Next.js App Router API examples
 ```
 
-The plaintext API key is returned only when a user is created or the key is rotated. The media service stores only a hash.
+### Media user API-key storage
 
-The media admin token source is:
+The Media Service stores only a cryptographic hash of each user API key. Platform Admin stores a separate AES-256-GCM encrypted copy in its own credential vault when a user is created or a key is rotated.
+
+This allows the authenticated UI to keep the key hidden by default and reveal it only after `Show key` is clicked.
+
+For an older user created before this vault behavior existed, the plaintext key cannot be reconstructed from the Media Service hash. Rotate that user's key once to store the new value in the encrypted Platform Admin vault.
+
+### Media API examples
+
+The top of `/media` includes a copyable Next.js App Router example. The example keeps the media bearer key server-side in `.env.local` and proxies storage usage, upload, list, binary download and delete operations through a Next.js Route Handler.
+
+This is preferred over putting the media bearer key in browser JavaScript.
+
+The private same-VPS Media endpoint for n8n is:
+
+```text
+http://media-service:8080
+```
+
+## Media admin token
+
+Source token:
 
 ```text
 /srv/apps/media-service/secrets/admin_token
 ```
 
-Platform Admin runs as UID/GID 1001, so create its private copy:
+Platform Admin runs as UID/GID 1001, so install a private readable copy:
 
 ```bash
 sudo install \
@@ -205,15 +231,9 @@ sudo install \
   /srv/apps/platform-admin/secrets/media_admin_token
 ```
 
-The media service itself is documented at:
-
-```text
-srv/apps/media-service/README.md
-```
-
 ## Required secret mounts
 
-Platform Admin expects infrastructure secrets from:
+Infrastructure secrets:
 
 ```text
 /srv/infrastructure/databases/postgres/secrets/platform_controller_password
@@ -231,15 +251,13 @@ App-local secrets:
 /srv/apps/platform-admin/secrets/media_admin_token
 ```
 
-The Docker agent's root-only source token is:
+Docker agent root-only source token:
 
 ```text
 /srv/infrastructure/management/docker-agent/secrets/control_token
 ```
 
-Platform Admin runs as UID/GID 1001, so it uses its own `0600` copy rather than directly mounting the root-only source file.
-
-Create/update the Docker agent token copy with:
+Install the Platform Admin copy:
 
 ```bash
 sudo install \
@@ -275,12 +293,13 @@ docker logs platform-admin --tail 100
 ```text
 Port 3000 remains bound to 127.0.0.1 only.
 Management APIs require admin authentication.
-Credential secrets are encrypted at rest.
+Recoverable credentials are encrypted at rest.
 PostgreSQL and Redis controller credentials are never exposed to the browser.
-Passwords are decrypted only for an authenticated explicit reveal request.
-The web application never mounts the Docker socket.
-Docker lifecycle/resource control is isolated behind a private token-authenticated allowlisted agent.
-Host /proc and /srv are mounted read-only into the private Docker agent only for host metrics.
+Media user API keys are masked by default and revealed only through authenticated server-side vault access.
+The web application never mounts docker.sock.
+Docker lifecycle/resource control stays behind the private token-authenticated allowlisted agent.
+Host /proc and /srv are mounted read-only into the private Docker agent only for metrics.
 Media admin access stays on media_net and its token is never exposed to the browser.
 Redis plaintext 6379 remains private.
+Secrets are never committed to Git.
 ```
