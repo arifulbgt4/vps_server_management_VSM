@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import {
+  createDatabaseForExistingRole,
   createDatabaseWithRole,
   deleteDatabaseAndRole,
+  deleteDatabaseOnly,
   listPostgresResources,
   rotateRolePassword,
 } from "@/lib/postgres";
@@ -42,8 +44,21 @@ export async function POST(request: Request) {
       );
     }
 
+    if (body.action === "create-existing-role") {
+      return NextResponse.json(
+        await createDatabaseForExistingRole(body.database, body.role),
+        { status: 201 },
+      );
+    }
+
     if (body.action === "rotate-password") {
-      return NextResponse.json(await rotateRolePassword(body.role));
+      return NextResponse.json(
+        await rotateRolePassword(body.role, body.database),
+      );
+    }
+
+    if (body.action === "delete-database") {
+      return NextResponse.json(await deleteDatabaseOnly(body.database));
     }
 
     if (body.action === "delete") {
