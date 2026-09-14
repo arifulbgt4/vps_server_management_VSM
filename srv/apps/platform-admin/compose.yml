@@ -21,12 +21,35 @@ services:
       PG_PUBLIC_HOST: ${PG_PUBLIC_HOST:-db.openmusk.store}
       PG_PUBLIC_PORT: ${PG_PUBLIC_PORT:-5432}
       PG_PUBLIC_SSLMODE: ${PG_PUBLIC_SSLMODE:-require}
+      PLATFORM_DB_NAME: platform_admin
+      PLATFORM_DB_USER: platform_app
+      PLATFORM_DB_PASSWORD_FILE: /run/secrets/platform_app_password
+      CREDENTIAL_VAULT_KEY_FILE: /run/secrets/credential_vault_key
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_USER: platform_controller
+      REDIS_PASSWORD_FILE: /run/secrets/redis_controller_password
+      REDIS_APP_HOST: redis
+      REDIS_APP_PORT: 6379
+      REDIS_APP_DATABASE: 0
     ports:
       - "127.0.0.1:${PLATFORM_ADMIN_PORT:-3000}:3000"
     volumes:
       - type: bind
         source: /srv/infrastructure/databases/postgres/secrets/platform_controller_password
         target: /run/secrets/platform_controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/infrastructure/databases/postgres/secrets/platform_app_password
+        target: /run/secrets/platform_app_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/infrastructure/cache/redis/secrets/platform_controller_password
+        target: /run/secrets/redis_controller_password
         read_only: true
         bind:
           create_host_path: false
@@ -39,6 +62,12 @@ services:
       - type: bind
         source: ./secrets/auth_session_secret
         target: /run/secrets/auth_session_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/credential_vault_key
+        target: /run/secrets/credential_vault_key
         read_only: true
         bind:
           create_host_path: false
@@ -57,9 +86,12 @@ services:
     networks:
       - proxy_net
       - postgres_net
+      - redis_net
 
 networks:
   proxy_net:
     external: true
   postgres_net:
+    external: true
+  redis_net:
     external: true
