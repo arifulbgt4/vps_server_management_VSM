@@ -34,6 +34,19 @@ services:
       REDIS_APP_DATABASE: 0
       REDIS_PUBLIC_HOST: ${REDIS_PUBLIC_HOST:-redis.openmusk.store}
       REDIS_PUBLIC_PORT: ${REDIS_PUBLIC_PORT:-6380}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_CONTROLLER_USER: platform_controller
+      MYSQL_CONTROLLER_PASSWORD_FILE: /run/secrets/mysql_controller_password
+      MYSQL_APP_HOST: mysql
+      MYSQL_APP_PORT: 3306
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      MONGO_CONTROLLER_USER: platform_controller
+      MONGO_CONTROLLER_PASSWORD_FILE: /run/secrets/mongo_controller_password
+      MONGO_APP_HOST: mongodb
+      MONGO_APP_PORT: 27017
+      MONGO_REPLICA_SET: rs0
       DOCKER_AGENT_URL: http://docker-agent:8080
       DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
       MEDIA_SERVICE_URL: http://media-service:8080
@@ -56,6 +69,18 @@ services:
       - type: bind
         source: /srv/infrastructure/cache/redis/secrets/platform_controller_password
         target: /run/secrets/redis_controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/infrastructure/databases/mysql/secrets/controller_password
+        target: /run/secrets/mysql_controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/infrastructure/databases/mongodb/secrets/controller_password
+        target: /run/secrets/mongo_controller_password
         read_only: true
         bind:
           create_host_path: false
@@ -105,6 +130,8 @@ services:
       - proxy_net
       - postgres_net
       - redis_net
+      - mysql_net
+      - mongo_net
       - management_net
       - media_net
 
@@ -114,6 +141,10 @@ networks:
   postgres_net:
     external: true
   redis_net:
+    external: true
+  mysql_net:
+    external: true
+  mongo_net:
     external: true
   management_net:
     external: true
