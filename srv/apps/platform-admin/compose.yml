@@ -73,13 +73,13 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: /srv/infrastructure/databases/mysql/secrets/controller_password
+        source: ./secrets/mysql_controller_password
         target: /run/secrets/mysql_controller_password
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: /srv/infrastructure/databases/mongodb/secrets/controller_password
+        source: ./secrets/mongo_controller_password
         target: /run/secrets/mongo_controller_password
         read_only: true
         bind:
