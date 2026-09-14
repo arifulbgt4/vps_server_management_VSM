@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
-import { controlDockerService, listDockerServices } from "@/lib/docker-control";
+import {
+  controlDockerService,
+  getDockerLogs,
+  listDockerServices,
+  setDockerLimits,
+} from "@/lib/docker-control";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +34,17 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
+
+    if (body.action === "logs") {
+      return NextResponse.json(await getDockerLogs(body.name, body.tail));
+    }
+
+    if (body.action === "set-limits") {
+      return NextResponse.json(
+        await setDockerLimits(body.name, body.cpu_percent, body.memory_percent),
+      );
+    }
+
     return NextResponse.json(await controlDockerService(body.name, body.action));
   } catch (error) {
     return NextResponse.json(
