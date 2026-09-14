@@ -15,7 +15,7 @@ services:
       DOCKER_AGENT_LIMITS_FILE: /data/resource-limits.json
       DOCKER_AGENT_HOST_PROC_PATH: /host/proc
       DOCKER_AGENT_HOST_STORAGE_PATH: /host/storage
-      DOCKER_AGENT_ALLOWLIST: ${DOCKER_AGENT_ALLOWLIST:-platform-admin,platform-postgres,platform-redis,n8n}
+      DOCKER_AGENT_ALLOWLIST: ${DOCKER_AGENT_ALLOWLIST:-platform-admin,platform-postgres,platform-redis,n8n,platform-media}
     volumes:
       - type: bind
         source: ./agent.mjs
