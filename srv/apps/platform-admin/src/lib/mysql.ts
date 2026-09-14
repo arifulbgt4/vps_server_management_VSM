@@ -83,6 +83,10 @@ function generatedPassword() {
   return randomBytes(24).toString("base64url");
 }
 
+function grantee(user: string) {
+  return `'${user}'@'%'`;
+}
+
 function privateConnection(database: string, user: string, password: string) {
   const host = process.env.MYSQL_APP_HOST || "mysql";
   const port = Number(process.env.MYSQL_APP_PORT || 3306);
@@ -124,6 +128,16 @@ async function databaseUsers() {
     map.get(row.database_name)!.add(match[1]);
   }
   return map;
+}
+
+async function assertUserHasDatabaseGrant(db: any, database: string, user: string) {
+  const [rows] = await db.query(
+    "SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA = ? AND GRANTEE = ? LIMIT 1",
+    [database, grantee(user)],
+  );
+  if (!(rows as any[]).length) {
+    throw new Error(`${user} is not assigned to database ${database}`);
+  }
 }
 
 export async function listMysqlResources() {
@@ -248,12 +262,7 @@ export async function getMysqlConnection(databaseInput: unknown, userInput: unkn
   const database = assertDatabase(databaseInput);
   const user = assertUser(userInput);
   const db = getPool();
-
-  const [rows] = await db.query(
-    "SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA = ? AND GRANTEE = ? LIMIT 1",
-    [database, `'${user}'@'%'`],
-  );
-  if (!(rows as any[]).length) throw new Error(`${user} is not assigned to database ${database}`);
+  await assertUserHasDatabaseGrant(db, database, user);
 
   const password = await getCredential("mysql", user);
   if (!password) throw new Error(`Password for ${user} is not stored in the encrypted vault. Rotate it once.`);
@@ -275,6 +284,7 @@ export async function rotateMysqlPassword(userInput: unknown, databaseInput?: un
 
   const [rows] = await db.query("SELECT User FROM mysql.user WHERE User = ? AND Host = '%'", [user]);
   if (!(rows as any[]).length) throw new Error(`User ${user} does not exist`);
+  if (database) await assertUserHasDatabaseGrant(db, database, user);
 
   await db.query(`ALTER USER ${literal(user)}@'%' IDENTIFIED BY ${literal(password)}`);
   let credentialStored = true;
@@ -304,6 +314,28 @@ export async function deleteMysqlDatabaseAndUser(databaseInput: unknown, userInp
   const database = assertDatabase(databaseInput);
   const user = assertUser(userInput);
   const db = getPool();
+
+  await assertUserHasDatabaseGrant(db, database, user);
+
+  const [otherGrants] = await db.query(
+    `
+      SELECT DISTINCT TABLE_SCHEMA AS database_name
+      FROM information_schema.SCHEMA_PRIVILEGES
+      WHERE GRANTEE = ?
+        AND TABLE_SCHEMA <> ?
+        AND TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+      ORDER BY TABLE_SCHEMA
+    `,
+    [grantee(user), database],
+  );
+
+  if ((otherGrants as any[]).length) {
+    const names = (otherGrants as any[]).map((row) => row.database_name).join(", ");
+    throw new Error(
+      `User ${user} is also assigned to: ${names}. Delete only database ${database}, or remove the other assignments before deleting the user.`,
+    );
+  }
+
   await db.query(`DROP DATABASE IF EXISTS ${ident(database)}`);
   await db.query(`DROP USER IF EXISTS ${literal(user)}@'%'`);
   await deleteCredential("mysql", user);
