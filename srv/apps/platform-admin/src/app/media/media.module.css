@@ -27,6 +27,7 @@
 .createPanel p,
 .sectionHeader p,
 .secretPanel p,
+.examplePanel p,
 .note {
   color: #94a3b8;
 }
@@ -80,6 +81,54 @@
   color: white !important;
 }
 
+.examplePanel,
+.createPanel,
+.usersPanel,
+.filesPanel,
+.secretPanel {
+  border: 1px solid #202b36;
+  background: #111821;
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.examplePanel {
+  border-color: #26394f;
+  background: #0e1620;
+}
+
+.exampleHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.exampleHeader h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.exampleHeader p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.examplePanel pre {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  border: 1px solid #203247;
+  border-radius: 10px;
+  background: #081018;
+  color: #d7e3ef;
+  line-height: 1.55;
+  font-size: 12px;
+}
+
 .summaryGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -100,7 +149,8 @@
 .summaryGrid span,
 .usageGrid span,
 .quotaRow label span,
-.createFields label span {
+.createFields label span,
+.apiKeyValue > span {
   color: #94a3b8;
   font-size: 12px;
   text-transform: uppercase;
@@ -130,17 +180,6 @@
   min-width: 2px;
   background: #60a5fa;
   border-radius: inherit;
-}
-
-.createPanel,
-.usersPanel,
-.filesPanel,
-.secretPanel {
-  border: 1px solid #202b36;
-  background: #111821;
-  border-radius: 14px;
-  padding: 18px;
-  margin-bottom: 16px;
 }
 
 .createPanel {
@@ -284,6 +323,35 @@
   color: #cbd5e1;
 }
 
+.apiKeyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #203247;
+  border-radius: 10px;
+  background: #09111a;
+}
+
+.apiKeyValue {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.apiKeyValue code {
+  color: #d7e3ef;
+  overflow-wrap: anywhere;
+  letter-spacing: 0.02em;
+}
+
+.apiKeyValue small {
+  color: #82909e;
+  font-size: 11px;
+}
+
 .usageGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -420,12 +488,14 @@
   }
 
   .topbar,
-  .userHeader {
+  .userHeader,
+  .exampleHeader {
     flex-direction: column;
   }
 
   .actions,
-  .userActions {
+  .userActions,
+  .secretActions {
     justify-content: flex-start;
   }
 
@@ -433,7 +503,8 @@
   .usageGrid,
   .createFields,
   .quotaRow,
-  .fileRow {
+  .fileRow,
+  .apiKeyRow {
     grid-template-columns: 1fr;
   }
 
