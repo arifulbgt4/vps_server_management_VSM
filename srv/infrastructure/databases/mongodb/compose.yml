@@ -1,0 +1,87 @@
+services:
+  mongodb:
+    image: mongo:${MONGO_VERSION:-8.0}
+    container_name: platform-mongodb
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Dhaka}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/root_password
+    command: ["mongod", "--config", "/etc/mongod.conf"]
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data/db
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./config/mongod.conf
+        target: /etc/mongod.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/root_password
+        target: /run/secrets/root_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/replica_keyfile
+        target: /run/secrets/replica_keyfile
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --host 127.0.0.1 --port 27017 --username $${MONGO_INITDB_ROOT_USERNAME} --password $$(cat /run/secrets/root_password) --authenticationDatabase admin --eval \"quit(db.adminCommand('ping').ok ? 0 : 2)\"",
+        ]
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 40s
+    networks:
+      mongo_net:
+        aliases:
+          - mongodb
+
+  mongodb-init:
+    image: mongo:${MONGO_VERSION:-8.0}
+    container_name: platform-mongodb-init
+    restart: "no"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    entrypoint: ["sh", "/usr/local/bin/vsm-mongodb-init.sh"]
+    environment:
+      MONGO_HOST: mongodb
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_CONTROLLER_USER: ${MONGO_CONTROLLER_USER:-platform_controller}
+      MONGO_REPLICA_SET: ${MONGO_REPLICA_SET:-rs0}
+    volumes:
+      - type: bind
+        source: ./scripts/init-replica.sh
+        target: /usr/local/bin/vsm-mongodb-init.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/root_password
+        target: /run/secrets/root_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/controller_password
+        target: /run/secrets/controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      mongo_net:
+
+networks:
+  mongo_net:
+    external: true
