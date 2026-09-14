@@ -43,10 +43,15 @@ cp .env.example .env
 chmod 600 .env
 openssl rand -hex 32 > secrets/root_password
 openssl rand -hex 32 > secrets/controller_password
-chmod 600 secrets/root_password secrets/controller_password
+sudo chown root:root secrets/root_password
+sudo chmod 600 secrets/root_password
+sudo chown 1001:1001 secrets/controller_password
+sudo chmod 600 secrets/controller_password
 
 docker network inspect mysql_net >/dev/null 2>&1 || docker network create mysql_net
 ```
+
+`controller_password` is intentionally readable only by UID/GID 1001 because Platform Admin runs as UID/GID 1001 and mounts that file read-only. The one-shot bootstrap container runs with sufficient privilege to read it. The root password is never mounted into Platform Admin.
 
 The MySQL image owns `/var/lib/mysql`. On the current official image this is normally UID/GID 999; verify the image before changing ownership on a new major release.
 
@@ -87,16 +92,15 @@ Attach both n8n main and worker to `mysql_net`. MySQL nodes should use host `mys
 
 ## Backup
 
-Example logical backup:
+Because 3306 is private, run logical backups from a client on `mysql_net` or with `docker exec` rather than publishing the port. Example from inside the database container:
 
 ```bash
-read -s MYSQL_ROOT_PASSWORD
-export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
-mysqldump -h 127.0.0.1 -uroot --all-databases --single-transaction --routines --events > backups/all.sql
-unset MYSQL_PWD MYSQL_ROOT_PASSWORD
+ROOT_PASSWORD="$(cat secrets/root_password)"
+docker exec -e MYSQL_PWD="$ROOT_PASSWORD" platform-mysql \
+  mysqldump -uroot --all-databases --single-transaction --routines --events \
+  > backups/all.sql
+unset ROOT_PASSWORD
 ```
-
-Because the service is private-only, the command above should normally be executed from a temporary client container on `mysql_net` or with `docker exec` rather than by publishing port 3306.
 
 ## Security invariants
 
