@@ -23,6 +23,7 @@ type MediaUser = {
   id: string;
   name: string;
   api_key_prefix: string;
+  api_key_stored: boolean;
   quota_bytes: number | null;
   used_bytes: number;
   available_bytes: number | null;
@@ -49,6 +50,7 @@ type MediaFile = {
 };
 
 type UserDraft = { quotaGiB: string };
+type RevealedKey = { userId: string; user: string; key: string };
 
 function formatBytes(bytes: number | null | undefined) {
   if (bytes === null || bytes === undefined) return "Unlimited";
@@ -86,7 +88,7 @@ export default function MediaManager() {
   const [drafts, setDrafts] = useState<Record<string, UserDraft>>({});
   const [newUserName, setNewUserName] = useState("");
   const [newUserQuota, setNewUserQuota] = useState("");
-  const [revealedKey, setRevealedKey] = useState<{ user: string; key: string } | null>(null);
+  const [revealedKey, setRevealedKey] = useState<RevealedKey | null>(null);
   const [selectedUser, setSelectedUser] = useState<MediaUser | null>(null);
   const [files, setFiles] = useState<MediaFile[]>([]);
   const [filesTotal, setFilesTotal] = useState(0);
@@ -122,6 +124,9 @@ export default function MediaManager() {
     return Math.min(100, (overview.filesystem.used_bytes / overview.filesystem.total_bytes) * 100);
   }, [overview]);
 
+  const apiBaseUrl = overview?.public_base_url || "https://media.openmusk.store";
+  const apiExample = `# Media user API key\nexport MEDIA_API_KEY='ms_live_...'\n\n# Storage usage\ncurl -H "Authorization: Bearer $MEDIA_API_KEY" \\\n  ${apiBaseUrl}/api/v1/storage\n\n# Upload a file\ncurl -H "Authorization: Bearer $MEDIA_API_KEY" \\\n  -F "visibility=private" \\\n  -F "file=@./product.jpg" \\\n  ${apiBaseUrl}/api/v1/files\n\n# List files\ncurl -H "Authorization: Bearer $MEDIA_API_KEY" \\\n  ${apiBaseUrl}/api/v1/files\n\n# Download actual binary\ncurl -H "Authorization: Bearer $MEDIA_API_KEY" \\\n  -o ./downloaded-file \\\n  ${apiBaseUrl}/api/v1/files/<FILE_ID>/content\n\n# Permanently delete DB row + physical file\ncurl -X DELETE \\\n  -H "Authorization: Bearer $MEDIA_API_KEY" \\\n  ${apiBaseUrl}/api/v1/files/<FILE_ID>`;
+
   async function post(payload: Record<string, unknown>) {
     const response = await fetch("/api/media", {
       method: "POST",
@@ -141,10 +146,10 @@ export default function MediaManager() {
     setBusy("create");
     try {
       const data = await post({ action: "create-user", name: newUserName.trim(), quota_bytes: quotaBytes(newUserQuota) });
-      setRevealedKey({ user: data.user.name, key: data.api_key });
+      setRevealedKey(null);
       setNewUserName("");
       setNewUserQuota("");
-      setMessage(`${data.user.name}: media user created`);
+      setMessage(`${data.user.name}: media user created. API key stored encrypted and hidden.`);
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to create media user");
@@ -180,13 +185,26 @@ export default function MediaManager() {
     }
   }
 
+  async function revealKey(user: MediaUser) {
+    setBusy(`key:${user.id}`);
+    try {
+      const data = await post({ action: "reveal-key", user_id: user.id });
+      setRevealedKey({ userId: user.id, user: user.name, key: data.api_key });
+      setMessage(`${user.name}: API key revealed for this authenticated session`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to reveal API key");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rotateKey(user: MediaUser) {
     if (!window.confirm(`Rotate the API key for ${user.name}? The old key will stop working immediately.`)) return;
     setBusy(user.id);
     try {
-      const data = await post({ action: "rotate-key", user_id: user.id });
-      setRevealedKey({ user: user.name, key: data.api_key });
-      setMessage(`${user.name}: API key rotated`);
+      await post({ action: "rotate-key", user_id: user.id });
+      setRevealedKey(null);
+      setMessage(`${user.name}: API key rotated, encrypted, and hidden`);
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to rotate API key");
@@ -208,6 +226,7 @@ export default function MediaManager() {
         setFiles([]);
         setFilesTotal(0);
       }
+      if (revealedKey?.userId === user.id) setRevealedKey(null);
       setMessage(`${user.name}: permanently deleted`);
       await refresh();
     } catch (error) {
@@ -255,13 +274,24 @@ export default function MediaManager() {
           <div>
             <a className={styles.back} href="/">← Platform Admin</a>
             <h1>Media Storage</h1>
-            <p>Multi-user file storage with per-user quotas, API keys, public/private files and hard deletion.</p>
+            <p>Multi-user file storage with per-user quotas, encrypted API keys, public/private files and hard deletion.</p>
           </div>
           <div className={styles.actions}>
             <span className={styles.status}>{message}</span>
             <button type="button" disabled={Boolean(busy)} onClick={() => refresh().catch((error) => setMessage(error.message))}>Refresh</button>
           </div>
         </header>
+
+        <section className={styles.examplePanel}>
+          <div className={styles.exampleHeader}>
+            <div>
+              <h2>Media API examples</h2>
+              <p>Use a media user's bearer key. n8n can replace the public base URL with <code>http://media-service:8080</code> on <code>media_net</code>.</p>
+            </div>
+            <button type="button" className={styles.secondary} onClick={() => navigator.clipboard.writeText(apiExample)}>Copy example</button>
+          </div>
+          <pre><code>{apiExample}</code></pre>
+        </section>
 
         <section className={styles.summaryGrid}>
           <article><span>Media users</span><strong>{overview?.users ?? "—"}</strong><small>Independent API keys and quotas</small></article>
@@ -275,7 +305,7 @@ export default function MediaManager() {
         </section>
 
         <section className={styles.createPanel}>
-          <div><h2>Create media user</h2><p>The API key is shown once. Leave quota blank for unlimited user storage.</p></div>
+          <div><h2>Create media user</h2><p>The API key is encrypted in Platform Admin and hidden by default. Leave quota blank for unlimited user storage.</p></div>
           <div className={styles.createFields}>
             <label><span>User name</span><input value={newUserName} onChange={(event) => setNewUserName(event.target.value)} placeholder="shop-01" /></label>
             <label><span>Quota (GiB)</span><input type="number" min="0" step="0.25" value={newUserQuota} onChange={(event) => setNewUserQuota(event.target.value)} placeholder="Unlimited" /></label>
@@ -283,35 +313,43 @@ export default function MediaManager() {
           </div>
         </section>
 
-        {revealedKey && (
-          <section className={styles.secretPanel}>
-            <div><strong>{revealedKey.user} API key</strong><p>Copy this now. The plaintext key is not stored and cannot be revealed later.</p></div>
-            <code>{revealedKey.key}</code>
-            <div className={styles.secretActions}>
-              <button type="button" onClick={() => navigator.clipboard.writeText(revealedKey.key)}>Copy key</button>
-              <button type="button" className={styles.secondary} onClick={() => setRevealedKey(null)}>Hide</button>
-            </div>
-          </section>
-        )}
-
         <section className={styles.usersPanel}>
-          <div className={styles.sectionHeader}><div><h2>Users</h2><p>Quota changes cannot be lower than the user's current stored bytes.</p></div></div>
+          <div className={styles.sectionHeader}><div><h2>Users</h2><p>API keys stay masked until Show key is clicked. Quota cannot be reduced below current stored bytes.</p></div></div>
           <div className={styles.userList}>
             {users.map((user) => {
               const draft = drafts[user.id] || { quotaGiB: bytesToGiB(user.quota_bytes) };
               const bar = user.quota_bytes ? Math.min(100, user.usage_percent) : 0;
+              const keyIsVisible = revealedKey?.userId === user.id;
               return (
                 <article className={styles.userCard} key={user.id}>
                   <div className={styles.userHeader}>
                     <div>
                       <div className={styles.titleLine}><h3>{user.name}</h3><span className={user.is_active ? styles.active : styles.disabled}>{user.is_active ? "active" : "disabled"}</span></div>
-                      <code>{user.api_key_prefix}…</code>
+                      <code>{user.id}</code>
                     </div>
                     <div className={styles.userActions}>
                       <button type="button" disabled={busy === user.id} onClick={() => loadFiles(user)}>Files ({user.file_count})</button>
-                      <button type="button" disabled={busy === user.id} onClick={() => rotateKey(user)}>Rotate key</button>
                       <button type="button" disabled={busy === user.id} onClick={() => toggleUser(user)}>{user.is_active ? "Disable" : "Enable"}</button>
                       <button type="button" className={styles.danger} disabled={busy === user.id} onClick={() => deleteUser(user)}>Delete user</button>
+                    </div>
+                  </div>
+
+                  <div className={styles.apiKeyRow}>
+                    <div className={styles.apiKeyValue}>
+                      <span>API key</span>
+                      <code>{keyIsVisible ? revealedKey.key : "••••••••••••••••••••••••••••••••"}</code>
+                      <small>{user.api_key_stored ? `Encrypted vault • ${user.api_key_prefix}…` : "Key not stored in Platform Admin vault. Rotate it once to enable reveal."}</small>
+                    </div>
+                    <div className={styles.secretActions}>
+                      {keyIsVisible ? (
+                        <>
+                          <button type="button" onClick={() => navigator.clipboard.writeText(revealedKey.key)}>Copy key</button>
+                          <button type="button" className={styles.secondary} onClick={() => setRevealedKey(null)}>Hide key</button>
+                        </>
+                      ) : (
+                        <button type="button" disabled={!user.api_key_stored || busy === `key:${user.id}`} onClick={() => revealKey(user)}>{busy === `key:${user.id}` ? "Revealing..." : "Show key"}</button>
+                      )}
+                      <button type="button" className={styles.secondary} disabled={busy === user.id} onClick={() => rotateKey(user)}>Rotate key</button>
                     </div>
                   </div>
 
