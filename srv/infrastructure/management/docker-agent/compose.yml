@@ -3,6 +3,11 @@ services:
     image: node:22-alpine
     container_name: platform-docker-agent
     restart: unless-stopped
+    # The agent needs to read a host-owned 0600 token and the root-owned
+    # Docker Unix socket. It is intentionally isolated on management_net,
+    # has no published port, drops Linux capabilities, and enforces an
+    # explicit container allowlist in agent.mjs.
+    user: "0:0"
     command: ["node", "/app/agent.mjs"]
     environment:
       PORT: 8080
