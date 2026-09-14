@@ -3,6 +3,7 @@ set -eu
 
 DB_PASSWORD_FILE="${N8N_DB_PASSWORD_FILE:-/run/secrets/db_password}"
 ENCRYPTION_KEY_FILE="${N8N_ENCRYPTION_KEY_FILE:-/run/secrets/encryption_key}"
+REDIS_PASSWORD_FILE="${N8N_REDIS_PASSWORD_FILE:-/run/secrets/redis_password}"
 
 if [ ! -r "$DB_PASSWORD_FILE" ]; then
   echo "n8n database password file is not readable: $DB_PASSWORD_FILE" >&2
@@ -14,8 +15,14 @@ if [ ! -r "$ENCRYPTION_KEY_FILE" ]; then
   exit 1
 fi
 
+if [ ! -r "$REDIS_PASSWORD_FILE" ]; then
+  echo "n8n Redis password file is not readable: $REDIS_PASSWORD_FILE" >&2
+  exit 1
+fi
+
 DB_PASSWORD="$(cat "$DB_PASSWORD_FILE")"
 ENCRYPTION_KEY="$(cat "$ENCRYPTION_KEY_FILE")"
+REDIS_PASSWORD="$(cat "$REDIS_PASSWORD_FILE")"
 
 if [ -z "$DB_PASSWORD" ]; then
   echo "n8n database password is empty" >&2
@@ -27,9 +34,19 @@ if [ "${#ENCRYPTION_KEY}" -lt 32 ]; then
   exit 1
 fi
 
+if [ -z "$REDIS_PASSWORD" ]; then
+  echo "n8n Redis password is empty" >&2
+  exit 1
+fi
+
 export DB_POSTGRESDB_PASSWORD="$DB_PASSWORD"
 export N8N_ENCRYPTION_KEY="$ENCRYPTION_KEY"
+export QUEUE_BULL_REDIS_PASSWORD="$REDIS_PASSWORD"
 
-unset DB_PASSWORD ENCRYPTION_KEY
+unset DB_PASSWORD ENCRYPTION_KEY REDIS_PASSWORD
 
-exec n8n start
+if [ "$#" -eq 0 ]; then
+  set -- start
+fi
+
+exec n8n "$@"
