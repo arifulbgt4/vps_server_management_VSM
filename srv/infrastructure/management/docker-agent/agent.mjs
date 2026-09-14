@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  statfsSync,
   writeFileSync,
 } from "node:fs";
 
@@ -10,6 +11,8 @@ const SOCKET_PATH = "/var/run/docker.sock";
 const PORT = Number(process.env.PORT || 8080);
 const TOKEN_FILE = process.env.DOCKER_AGENT_TOKEN_FILE || "/run/secrets/control_token";
 const LIMITS_FILE = process.env.DOCKER_AGENT_LIMITS_FILE || "/data/resource-limits.json";
+const HOST_PROC_PATH = process.env.DOCKER_AGENT_HOST_PROC_PATH || "/host/proc";
+const HOST_STORAGE_PATH = process.env.DOCKER_AGENT_HOST_STORAGE_PATH || "/host/storage";
 const TOKEN = readFileSync(TOKEN_FILE, "utf8").trim();
 const ALLOWLIST = new Set(
   (process.env.DOCKER_AGENT_ALLOWLIST || "")
@@ -178,6 +181,116 @@ function cpuUsagePercent(stats, hostCpuCount) {
   return dockerStylePercent / Math.max(1, hostCpuCount);
 }
 
+function hostCpuSnapshot() {
+  const firstLine = readFileSync(`${HOST_PROC_PATH}/stat`, "utf8").split("\n", 1)[0] || "";
+  const fields = firstLine.trim().split(/\s+/);
+  if (fields[0] !== "cpu") throw new Error("Unable to parse host /proc/stat");
+  const values = fields.slice(1, 9).map((value) => Number(value || 0));
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const idle = Number(values[3] || 0) + Number(values[4] || 0);
+  return { total, idle };
+}
+
+async function hostCpuUsagePercent() {
+  const before = hostCpuSnapshot();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const after = hostCpuSnapshot();
+  const totalDelta = after.total - before.total;
+  const idleDelta = after.idle - before.idle;
+  if (totalDelta <= 0) return 0;
+  return Math.min(100, Math.max(0, ((totalDelta - idleDelta) / totalDelta) * 100));
+}
+
+function hostMemoryMetrics(fallbackTotal) {
+  try {
+    const text = readFileSync(`${HOST_PROC_PATH}/meminfo`, "utf8");
+    const values = {};
+    for (const line of text.split("\n")) {
+      const match = line.match(/^([^:]+):\s+(\d+)\s+kB$/);
+      if (match) values[match[1]] = Number(match[2]) * 1024;
+    }
+    const total = Number(values.MemTotal || fallbackTotal || 0);
+    const available = Number(
+      values.MemAvailable
+        || (Number(values.MemFree || 0) + Number(values.Buffers || 0) + Number(values.Cached || 0)),
+    );
+    const used = Math.max(0, total - available);
+    return {
+      total_bytes: total,
+      used_bytes: used,
+      available_bytes: Math.max(0, available),
+      usage_percent: total > 0 ? (used / total) * 100 : 0,
+    };
+  } catch (error) {
+    console.error("Host RAM metrics unavailable:", error.message);
+    const total = Number(fallbackTotal || 0);
+    return {
+      total_bytes: total,
+      used_bytes: null,
+      available_bytes: null,
+      usage_percent: null,
+    };
+  }
+}
+
+function hostDiskMetrics() {
+  try {
+    const stats = statfsSync(HOST_STORAGE_PATH);
+    const blockSize = Number(stats.bsize || 0);
+    const total = blockSize * Number(stats.blocks || 0);
+    const free = blockSize * Number(stats.bfree || 0);
+    const available = blockSize * Number(stats.bavail || 0);
+    const used = Math.max(0, total - free);
+    return {
+      total_bytes: total,
+      used_bytes: used,
+      available_bytes: Math.max(0, available),
+      usage_percent: total > 0 ? (used / total) * 100 : 0,
+      path: "/srv",
+    };
+  } catch (error) {
+    console.error("Host disk metrics unavailable:", error.message);
+    return {
+      total_bytes: null,
+      used_bytes: null,
+      available_bytes: null,
+      usage_percent: null,
+      path: "/srv",
+    };
+  }
+}
+
+async function hostMetrics(info) {
+  const cpus = Math.max(1, Number(info.NCPU || 1));
+  let cpuPercent = null;
+  try {
+    cpuPercent = await hostCpuUsagePercent();
+  } catch (error) {
+    console.error("Host CPU metrics unavailable:", error.message);
+  }
+
+  const memory = hostMemoryMetrics(Number(info.MemTotal || 0));
+  const disk = hostDiskMetrics();
+  const cpuAvailable = cpuPercent === null ? null : Math.max(0, 100 - cpuPercent);
+
+  return {
+    cpus,
+    cpu_usage_percent: cpuPercent,
+    cpu_available_percent: cpuAvailable,
+    cpu_used_cores: cpuPercent === null ? null : cpus * (cpuPercent / 100),
+    cpu_available_cores: cpuAvailable === null ? null : cpus * (cpuAvailable / 100),
+    memory_bytes: memory.total_bytes,
+    memory_used_bytes: memory.used_bytes,
+    memory_available_bytes: memory.available_bytes,
+    memory_usage_percent: memory.usage_percent,
+    disk_total_bytes: disk.total_bytes,
+    disk_used_bytes: disk.used_bytes,
+    disk_available_bytes: disk.available_bytes,
+    disk_usage_percent: disk.usage_percent,
+    disk_path: disk.path,
+  };
+}
+
 function decodeDockerLogs(buffer, tty) {
   if (tty) return buffer.toString("utf8");
 
@@ -290,19 +403,14 @@ async function listServices() {
     dockerRequest("GET", "/containers/json?all=1"),
     dockerRequest("GET", "/info"),
   ]);
+  const host = await hostMetrics(info);
 
   const allowlisted = (containers || []).filter((container) => containerName(container));
   const services = (await Promise.all(allowlisted.map((container) => serviceDetails(container, info))))
     .filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return {
-    host: {
-      cpus: Number(info.NCPU || 0),
-      memory_bytes: Number(info.MemTotal || 0),
-    },
-    services,
-  };
+  return { host, services };
 }
 
 async function controlService(name, action) {
@@ -550,6 +658,7 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`Docker control agent listening on ${PORT}`);
   console.log(`Allowlisted containers: ${[...ALLOWLIST].join(", ") || "none"}`);
   console.log(`Managed resource limits: ${LIMITS_FILE}`);
+  console.log(`Host metrics: proc=${HOST_PROC_PATH}, storage=${HOST_STORAGE_PATH}`);
 });
 
 setTimeout(() => {
