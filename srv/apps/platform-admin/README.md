@@ -2,7 +2,7 @@
 
 Authenticated Next.js control panel for independently managed VPS services.
 
-Current version: `0.7.0`
+Current version: `0.8.0`
 
 For the full VPS build, networking, TLS, firewall, deployment and troubleshooting history, see:
 
@@ -106,9 +106,12 @@ Platform Admin does not mount `/var/run/docker.sock`. A separate `platform-docke
 Current Docker UI features:
 
 ```text
+host total/used/available CPU
+host total/used/available RAM
+host total/used/available disk space for the filesystem backing /srv
 state and health
-CPU usage %
-RAM usage and %
+container CPU usage %
+container RAM usage and %
 uptime
 restart count
 PID count
@@ -120,6 +123,8 @@ CPU limit %
 RAM limit %
 persistent resource-limit policy
 ```
+
+Host CPU/RAM metrics are read from the VPS host `/proc`. Disk capacity/usage is measured from the host filesystem backing `/srv`. These host paths are mounted read-only into the private Docker agent.
 
 Metrics refresh automatically approximately every 10 seconds.
 
@@ -227,5 +232,6 @@ PostgreSQL and Redis controller credentials are never exposed to the browser.
 Passwords are decrypted only for an authenticated explicit reveal request.
 The web application never mounts the Docker socket.
 Docker lifecycle/resource control is isolated behind a private token-authenticated allowlisted agent.
+Host /proc and /srv are mounted read-only into the private Docker agent only for host metrics.
 Redis plaintext 6379 remains private.
 ```
