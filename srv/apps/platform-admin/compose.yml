@@ -9,6 +9,10 @@ services:
       NODE_ENV: production
       HOSTNAME: 0.0.0.0
       PORT: 3000
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
+      AUTH_SESSION_SECRET_FILE: /run/secrets/auth_session_secret
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: postgres
@@ -20,6 +24,18 @@ services:
       - type: bind
         source: /srv/infrastructure/databases/postgres/secrets/platform_controller_password
         target: /run/secrets/platform_controller_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/admin_password_hash
+        target: /run/secrets/admin_password_hash
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/auth_session_secret
+        target: /run/secrets/auth_session_secret
         read_only: true
         bind:
           create_host_path: false
