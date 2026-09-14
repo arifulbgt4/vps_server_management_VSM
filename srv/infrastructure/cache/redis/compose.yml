@@ -6,11 +6,19 @@ services:
     environment:
       TZ: ${TZ:-Asia/Dhaka}
     command: ["sh", "/usr/local/bin/vsm-redis-entrypoint.sh"]
+    ports:
+      - "0.0.0.0:${REDIS_PUBLIC_PORT:-6380}:6380"
     volumes:
       - ./data:/data
       - type: bind
         source: ./config/redis.conf
         target: /usr/local/etc/redis/redis.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./config/tls
+        target: /etc/redis/tls
         read_only: true
         bind:
           create_host_path: false
@@ -30,7 +38,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "REDISCLI_AUTH=$$(cat /run/secrets/platform_controller_password) redis-cli --user platform_controller -h 127.0.0.1 ping | grep -q PONG",
+          "REDISCLI_AUTH=$$(cat /run/secrets/platform_controller_password) redis-cli --user platform_controller -h 127.0.0.1 -p 6379 ping | grep -q PONG",
         ]
       interval: 5s
       timeout: 5s
