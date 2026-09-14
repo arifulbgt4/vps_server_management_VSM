@@ -7,6 +7,7 @@ import {
   getMediaOverview,
   listMediaFiles,
   listMediaUsers,
+  revealMediaUserKey,
   rotateMediaUserKey,
   updateMediaUser,
 } from "@/lib/media-control";
@@ -60,6 +61,9 @@ export async function POST(request: Request) {
     }
     if (body.action === "rotate-key") {
       return NextResponse.json(await rotateMediaUserKey(body.user_id));
+    }
+    if (body.action === "reveal-key") {
+      return NextResponse.json(await revealMediaUserKey(body.user_id));
     }
     if (body.action === "delete-user") {
       return NextResponse.json(await deleteMediaUser(body.user_id));
