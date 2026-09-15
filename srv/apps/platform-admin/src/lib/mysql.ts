@@ -35,13 +35,18 @@ function controllerUser() {
   return process.env.MYSQL_CONTROLLER_USER || "platform_controller";
 }
 
+function tlsEnabled() {
+  return (process.env.MYSQL_TLS_ENABLED || "true").toLowerCase() !== "false";
+}
+
 function getPool() {
   if (!pool) {
     pool = mysql.createPool({
-      host: process.env.MYSQL_HOST || "mysql",
+      host: process.env.MYSQL_HOST || "mysql.openmusk.store",
       port: Number(process.env.MYSQL_PORT || 3306),
       user: controllerUser(),
       password: controllerPassword(),
+      ssl: tlsEnabled() ? { rejectUnauthorized: true } : undefined,
       waitForConnections: true,
       connectionLimit: 5,
       maxIdle: 5,
@@ -87,15 +92,20 @@ function grantee(user: string) {
   return `'${user}'@'%'`;
 }
 
+function mysqlUrl(database: string, user: string, password: string, host: string, port: number) {
+  return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?ssl-mode=VERIFY_IDENTITY`;
+}
+
 function privateConnection(database: string, user: string, password: string) {
-  const host = process.env.MYSQL_APP_HOST || "mysql";
+  const host = process.env.MYSQL_APP_HOST || "mysql.openmusk.store";
   const port = Number(process.env.MYSQL_APP_PORT || 3306);
   return {
     host,
     port,
     database,
     user,
-    url: `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`,
+    tls_required: true,
+    url: mysqlUrl(database, user, password, host, port),
   };
 }
 
@@ -108,7 +118,9 @@ function publicConnection(database: string, user: string, password: string) {
     port,
     database,
     user,
-    url: `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`,
+    tls_required: true,
+    ssl_mode: "VERIFY_IDENTITY",
+    url: mysqlUrl(database, user, password, host, port),
   };
 }
 
@@ -204,7 +216,7 @@ export async function createMysqlDatabaseWithUser(databaseInput: unknown, userIn
 
     await connection.query(`CREATE DATABASE ${ident(database)} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`);
     dbCreated = true;
-    await connection.query(`CREATE USER ${literal(user)}@'%' IDENTIFIED BY ${literal(password)}`);
+    await connection.query(`CREATE USER ${literal(user)}@'%' IDENTIFIED BY ${literal(password)} REQUIRE SSL`);
     userCreated = true;
     await connection.query(`GRANT ALL PRIVILEGES ON ${ident(database)}.* TO ${literal(user)}@'%'`);
     await setCredential("mysql", user, password);
@@ -245,6 +257,7 @@ export async function createMysqlDatabaseForExistingUser(databaseInput: unknown,
 
   await db.query(`CREATE DATABASE ${ident(database)} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`);
   try {
+    await db.query(`ALTER USER ${literal(user)}@'%' REQUIRE SSL`);
     await db.query(`GRANT ALL PRIVILEGES ON ${ident(database)}.* TO ${literal(user)}@'%'`);
   } catch (error) {
     await db.query(`DROP DATABASE IF EXISTS ${ident(database)}`).catch(() => undefined);
@@ -286,7 +299,7 @@ export async function rotateMysqlPassword(userInput: unknown, databaseInput?: un
   if (!(rows as any[]).length) throw new Error(`User ${user} does not exist`);
   if (database) await assertUserHasDatabaseGrant(db, database, user);
 
-  await db.query(`ALTER USER ${literal(user)}@'%' IDENTIFIED BY ${literal(password)}`);
+  await db.query(`ALTER USER ${literal(user)}@'%' IDENTIFIED BY ${literal(password)} REQUIRE SSL`);
   let credentialStored = true;
   try {
     await setCredential("mysql", user, password);
