@@ -3,7 +3,7 @@ services:
     image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.38.7}
     container_name: n8n
     restart: unless-stopped
-    entrypoint: ["tini", "--", "/opt/n8n/entrypoint.sh"]
+    entrypoint: ["tini", "--", "sh", "/opt/n8n/entrypoint.sh"]
     command: ["start"]
     environment:
       DB_TYPE: postgresdb
@@ -112,7 +112,7 @@ services:
     image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.38.7}
     container_name: n8n-worker
     restart: unless-stopped
-    entrypoint: ["tini", "--", "/opt/n8n/entrypoint.sh"]
+    entrypoint: ["tini", "--", "sh", "/opt/n8n/entrypoint.sh"]
     command: ["worker", "--concurrency=${N8N_WORKER_CONCURRENCY:-5}"]
     environment:
       DB_TYPE: postgresdb
