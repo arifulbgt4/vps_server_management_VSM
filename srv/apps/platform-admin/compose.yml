@@ -34,12 +34,15 @@ services:
       REDIS_APP_DATABASE: 0
       REDIS_PUBLIC_HOST: ${REDIS_PUBLIC_HOST:-redis.openmusk.store}
       REDIS_PUBLIC_PORT: ${REDIS_PUBLIC_PORT:-6380}
-      MYSQL_HOST: mysql
+      MYSQL_HOST: ${MYSQL_HOST:-mysql.openmusk.store}
       MYSQL_PORT: 3306
       MYSQL_CONTROLLER_USER: platform_controller
       MYSQL_CONTROLLER_PASSWORD_FILE: /run/secrets/mysql_controller_password
-      MYSQL_APP_HOST: mysql
+      MYSQL_TLS_ENABLED: "true"
+      MYSQL_APP_HOST: ${MYSQL_APP_HOST:-mysql.openmusk.store}
       MYSQL_APP_PORT: 3306
+      MYSQL_PUBLIC_HOST: ${MYSQL_PUBLIC_HOST:-mysql.openmusk.store}
+      MYSQL_PUBLIC_PORT: ${MYSQL_PUBLIC_PORT:-3306}
       MONGO_HOST: mongodb
       MONGO_PORT: 27017
       MONGO_CONTROLLER_USER: platform_controller
@@ -47,6 +50,8 @@ services:
       MONGO_APP_HOST: mongodb
       MONGO_APP_PORT: 27017
       MONGO_REPLICA_SET: rs0
+      MONGO_PUBLIC_HOST: ${MONGO_PUBLIC_HOST:-mongo.openmusk.store}
+      MONGO_PUBLIC_PORT: ${MONGO_PUBLIC_PORT:-27017}
       DOCKER_AGENT_URL: http://docker-agent:8080
       DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
       MEDIA_SERVICE_URL: http://media-service:8080
