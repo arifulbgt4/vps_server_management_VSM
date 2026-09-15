@@ -15,7 +15,7 @@ services:
       - --collation-server=utf8mb4_0900_ai_ci
       - --skip-name-resolve
       - --max-connections=${MYSQL_MAX_CONNECTIONS:-150}
-      - --ssl-ca=/run/tls/chain.pem
+      - --ssl-ca=/run/tls/ca.pem
       - --ssl-cert=/run/tls/fullchain.pem
       - --ssl-key=/run/tls/privkey.pem
       - --require-secure-transport=ON
@@ -52,8 +52,8 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ./tls/chain.pem
-        target: /run/tls/chain.pem
+        source: ./tls/ca.pem
+        target: /run/tls/ca.pem
         read_only: true
         bind:
           create_host_path: false
