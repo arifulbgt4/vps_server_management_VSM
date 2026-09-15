@@ -92,12 +92,19 @@ function grantee(user: string) {
   return `'${user}'@'%'`;
 }
 
-function mysqlUrl(database: string, user: string, password: string, host: string, port: number) {
-  return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?ssl-mode=VERIFY_IDENTITY`;
+function mysqlUrl(
+  database: string,
+  user: string,
+  password: string,
+  host: string,
+  port: number,
+  sslMode: "REQUIRED" | "VERIFY_IDENTITY",
+) {
+  return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?ssl-mode=${sslMode}`;
 }
 
 function privateConnection(database: string, user: string, password: string) {
-  const host = process.env.MYSQL_APP_HOST || "mysql.openmusk.store";
+  const host = process.env.MYSQL_APP_HOST || "mysql";
   const port = Number(process.env.MYSQL_APP_PORT || 3306);
   return {
     host,
@@ -105,7 +112,8 @@ function privateConnection(database: string, user: string, password: string) {
     database,
     user,
     tls_required: true,
-    url: mysqlUrl(database, user, password, host, port),
+    ssl_mode: "REQUIRED",
+    url: mysqlUrl(database, user, password, host, port, "REQUIRED"),
   };
 }
 
@@ -120,7 +128,7 @@ function publicConnection(database: string, user: string, password: string) {
     user,
     tls_required: true,
     ssl_mode: "VERIFY_IDENTITY",
-    url: mysqlUrl(database, user, password, host, port),
+    url: mysqlUrl(database, user, password, host, port, "VERIFY_IDENTITY"),
   };
 }
 
