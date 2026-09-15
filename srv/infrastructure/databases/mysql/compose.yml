@@ -15,6 +15,12 @@ services:
       - --collation-server=utf8mb4_0900_ai_ci
       - --skip-name-resolve
       - --max-connections=${MYSQL_MAX_CONNECTIONS:-150}
+      - --ssl-ca=/run/tls/chain.pem
+      - --ssl-cert=/run/tls/fullchain.pem
+      - --ssl-key=/run/tls/privkey.pem
+      - --require-secure-transport=ON
+    ports:
+      - "${MYSQL_BIND_IP:-0.0.0.0}:${MYSQL_PUBLIC_PORT:-3306}:3306"
     volumes:
       - type: bind
         source: ./data
@@ -39,6 +45,24 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./tls/fullchain.pem
+        target: /run/tls/fullchain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./tls/chain.pem
+        target: /run/tls/chain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./tls/privkey.pem
+        target: /run/tls/privkey.pem
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test:
         [
@@ -53,6 +77,7 @@ services:
       mysql_net:
         aliases:
           - mysql
+          - ${MYSQL_PUBLIC_HOST:-mysql.openmusk.store}
 
 networks:
   mysql_net:
