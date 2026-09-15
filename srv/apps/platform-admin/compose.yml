@@ -39,7 +39,7 @@ services:
       MYSQL_CONTROLLER_USER: platform_controller
       MYSQL_CONTROLLER_PASSWORD_FILE: /run/secrets/mysql_controller_password
       MYSQL_TLS_ENABLED: "true"
-      MYSQL_APP_HOST: ${MYSQL_APP_HOST:-mysql.openmusk.store}
+      MYSQL_APP_HOST: ${MYSQL_APP_HOST:-mysql}
       MYSQL_APP_PORT: 3306
       MYSQL_PUBLIC_HOST: ${MYSQL_PUBLIC_HOST:-mysql.openmusk.store}
       MYSQL_PUBLIC_PORT: ${MYSQL_PUBLIC_PORT:-3306}
