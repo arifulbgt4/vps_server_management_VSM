@@ -454,13 +454,16 @@ async function ensureMemoryLimitIsSafe(name, memoryBytes) {
 
   const stats = await dockerRequest("GET", `/containers/${encodeURIComponent(name)}/stats?stream=false&one-shot=true`);
   const active = activeMemoryUsage(stats);
-  const raw = Number(stats?.memory_stats?.usage || 0);
-  const usage = Math.max(active, raw);
+  const headroom = Math.max(64 * 1024 * 1024, Math.ceil(active * 0.10));
+  const safeMinimum = active + headroom;
 
-  if (usage > memoryBytes) {
-    const usageMb = (usage / 1024 / 1024).toFixed(1);
+  if (memoryBytes < safeMinimum) {
+    const activeMb = (active / 1024 / 1024).toFixed(1);
+    const minimumMb = (safeMinimum / 1024 / 1024).toFixed(1);
     const limitMb = (memoryBytes / 1024 / 1024).toFixed(1);
-    throw new Error(`RAM limit ${limitMb} MiB is below current cgroup usage ${usageMb} MiB`);
+    throw new Error(
+      `RAM limit ${limitMb} MiB is too close to current active usage ${activeMb} MiB; choose at least ${minimumMb} MiB`,
+    );
   }
 }
 
