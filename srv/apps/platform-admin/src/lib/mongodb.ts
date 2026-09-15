@@ -116,7 +116,7 @@ export async function listMongoResources() {
   const mongo = await getClient();
   const [databaseInfo, userInfo, storedKeys, ping] = await Promise.all([
     mongo.db("admin").admin().listDatabases({ nameOnly: false }),
-    mongo.db("admin").command({ usersInfo: { forAllDBs: true }, showPrivileges: true }),
+    mongo.db("admin").command({ usersInfo: { forAllDBs: true } }),
     credentialUsers("mongodb"),
     mongo.db("admin").command({ ping: 1 }),
   ]);
