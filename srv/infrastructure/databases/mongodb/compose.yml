@@ -91,6 +91,40 @@ services:
     networks:
       mongo_net:
 
+  mongodb-public:
+    image: haproxy:${HAPROXY_VERSION:-3.2-alpine}
+    container_name: platform-mongodb-public
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "${MONGO_BIND_IP:-0.0.0.0}:${MONGO_PUBLIC_PORT:-27017}:27017"
+    volumes:
+      - type: bind
+        source: ./config/haproxy-public.cfg
+        target: /usr/local/etc/haproxy/haproxy.cfg
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./tls/mongodb.pem
+        target: /run/tls/mongodb.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/lib/haproxy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      mongo_net:
+
 networks:
   mongo_net:
     external: true
