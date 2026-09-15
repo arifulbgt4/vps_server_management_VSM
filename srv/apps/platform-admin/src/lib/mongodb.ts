@@ -106,7 +106,9 @@ function publicConnection(database: string, user: string, password: string) {
     database,
     user,
     replica_set: rs,
-    url: `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?authSource=${encodeURIComponent(database)}&replicaSet=${encodeURIComponent(rs)}&tls=true`,
+    tls_required: true,
+    direct_connection: true,
+    url: `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?authSource=${encodeURIComponent(database)}&replicaSet=${encodeURIComponent(rs)}&directConnection=true&tls=true`,
   };
 }
 
