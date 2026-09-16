@@ -1,0 +1,6 @@
+.env
+.env.local
+.vsm-local/
+*.pem
+*.key
+.DS_Store

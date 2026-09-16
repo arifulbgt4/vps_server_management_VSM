@@ -1,0 +1,760 @@
+name: vsm
+
+services:
+  vsm-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vsm-toolbox:local
+    container_name: vsm-init
+    restart: "no"
+    command: ["node", "/opt/vsm/init-secrets.mjs"]
+    environment:
+      VSM_RUNTIME_ROOT: /srv/vsm
+      VSM_ADMIN_PASSWORD: ${VSM_ADMIN_PASSWORD:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+    volumes:
+      - /srv/vsm:/srv/vsm
+
+  platform-proxy:
+    image: nginx:${NGINX_VERSION:-1.27-alpine}
+    container_name: platform-proxy
+    restart: unless-stopped
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+    entrypoint: ["sh", "/opt/vsm/nginx-entrypoint.sh"]
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.openmusk.store}
+      N8N_DOMAIN: ${N8N_DOMAIN:-n8n.openmusk.store}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.openmusk.store}
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - /srv/vsm/letsencrypt:/etc/letsencrypt
+      - /srv/vsm/acme:/var/www/certbot
+      - ./deploy/nginx/acme.conf:/etc/nginx/acme.conf:ro
+      - ./deploy/nginx/nginx.conf.template:/opt/vsm/nginx.conf.template:ro
+      - ./deploy/nginx/entrypoint.sh:/opt/vsm/nginx-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    networks:
+      proxy_net:
+        aliases:
+          - platform-proxy
+
+  certbot-init:
+    image: certbot/certbot:${CERTBOT_VERSION:-latest}
+    container_name: vsm-certbot-init
+    restart: "no"
+    depends_on:
+      platform-proxy:
+        condition: service_healthy
+    entrypoint: ["sh", "/opt/vsm/issue-certs.sh"]
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-admin@openmusk.store}
+      ACME_STAGING: ${ACME_STAGING:-false}
+      PUBLIC_IPV4: ${PUBLIC_IPV4:-}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.openmusk.store}
+      N8N_DOMAIN: ${N8N_DOMAIN:-n8n.openmusk.store}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.openmusk.store}
+      POSTGRES_DOMAIN: ${POSTGRES_DOMAIN:-db.openmusk.store}
+      REDIS_DOMAIN: ${REDIS_DOMAIN:-redis.openmusk.store}
+      MYSQL_DOMAIN: ${MYSQL_DOMAIN:-mysql.openmusk.store}
+      MONGO_DOMAIN: ${MONGO_DOMAIN:-mongo.openmusk.store}
+    volumes:
+      - /srv/vsm/letsencrypt:/etc/letsencrypt
+      - /srv/vsm/acme:/var/www/certbot
+      - ./deploy/certbot/issue-certs.sh:/opt/vsm/issue-certs.sh:ro
+    networks:
+      - proxy_net
+
+  cert-sync:
+    image: certbot/certbot:${CERTBOT_VERSION:-latest}
+    container_name: vsm-cert-sync
+    restart: "no"
+    depends_on:
+      certbot-init:
+        condition: service_completed_successfully
+    entrypoint: ["sh", "/opt/vsm/sync-certs.sh"]
+    environment:
+      POSTGRES_DOMAIN: ${POSTGRES_DOMAIN:-db.openmusk.store}
+      REDIS_DOMAIN: ${REDIS_DOMAIN:-redis.openmusk.store}
+      MYSQL_DOMAIN: ${MYSQL_DOMAIN:-mysql.openmusk.store}
+      MONGO_DOMAIN: ${MONGO_DOMAIN:-mongo.openmusk.store}
+      TLS_ROOT: /srv/vsm/tls
+    volumes:
+      - /srv/vsm/letsencrypt:/etc/letsencrypt:ro
+      - /srv/vsm/tls:/srv/vsm/tls
+      - ./deploy/certbot/sync-certs.sh:/opt/vsm/sync-certs.sh:ro
+
+  firewall-keeper:
+    image: vsm-toolbox:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vsm-firewall
+    restart: unless-stopped
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      POSTGRES_PUBLIC_PORT: ${POSTGRES_PUBLIC_PORT:-5432}
+      REDIS_PUBLIC_PORT: ${REDIS_PUBLIC_PORT:-6380}
+      MYSQL_PUBLIC_PORT: ${MYSQL_PUBLIC_PORT:-3306}
+      MONGO_PUBLIC_PORT: ${MONGO_PUBLIC_PORT:-27017}
+      HTTP_PORT: 80
+      HTTPS_PORT: 443
+    command: ["sh", "/opt/vsm/firewall-loop.sh"]
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: platform-postgres
+    restart: unless-stopped
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+      cert-sync:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-Asia/Dhaka}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/tls/server.crt
+      - -c
+      - ssl_key_file=/run/tls/server.key
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - max_connections=150
+    ports:
+      - "0.0.0.0:${POSTGRES_PUBLIC_PORT:-5432}:5432"
+    volumes:
+      - /srv/vsm/postgres/data:/var/lib/postgresql/data
+      - /srv/vsm/tls/postgres/server.crt:/run/tls/server.crt:ro
+      - /srv/vsm/tls/postgres/server.key:/run/tls/server.key:ro
+      - /srv/vsm/secrets/postgres/postgres_superuser_password:/run/secrets/postgres_superuser_password:ro
+      - /srv/vsm/secrets/postgres/platform_controller_password:/run/secrets/platform_controller_password:ro
+      - /srv/vsm/secrets/postgres/platform_app_password:/run/secrets/platform_app_password:ro
+      - /srv/vsm/secrets/postgres/n8n_db_password:/run/secrets/n8n_db_password:ro
+      - /srv/vsm/secrets/postgres/media_db_password:/run/secrets/media_db_password:ro
+      - ./deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/20-vsm-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    cpus: ${POSTGRES_CPUS:-1.0}
+    mem_limit: ${POSTGRES_MEMORY:-1536m}
+    networks:
+      postgres_net:
+        aliases:
+          - postgres
+
+  redis:
+    image: redis:${REDIS_VERSION:-7.4-alpine}
+    container_name: platform-redis
+    restart: unless-stopped
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+      cert-sync:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-Asia/Dhaka}
+    entrypoint: ["sh", "/opt/vsm/redis-entrypoint.sh"]
+    ports:
+      - "0.0.0.0:${REDIS_PUBLIC_PORT:-6380}:6380"
+    volumes:
+      - /srv/vsm/redis/data:/data
+      - ./deploy/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./deploy/redis/entrypoint.sh:/opt/vsm/redis-entrypoint.sh:ro
+      - /srv/vsm/tls/redis:/etc/redis/tls:ro
+      - /srv/vsm/secrets/redis/platform_controller_password:/run/secrets/platform_controller_password:ro
+      - /srv/vsm/secrets/redis/n8n_queue_password:/run/secrets/n8n_queue_password:ro
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/platform_controller_password) redis-cli --user platform_controller -h 127.0.0.1 -p 6379 ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    cpus: ${REDIS_CPUS:-0.50}
+    mem_limit: ${REDIS_MEMORY:-512m}
+    networks:
+      redis_net:
+        aliases:
+          - redis
+
+  mysql:
+    image: mysql:${MYSQL_VERSION:-8.4}
+    container_name: platform-mysql
+    restart: unless-stopped
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+      cert-sync:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-Asia/Dhaka}
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/root_password
+      MYSQL_ROOT_HOST: localhost
+      MYSQL_CONTROLLER_USER: platform_controller
+    command:
+      - mysqld
+      - --bind-address=0.0.0.0
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --skip-name-resolve
+      - --max-connections=150
+      - --ssl-ca=/run/tls/ca.pem
+      - --ssl-cert=/run/tls/fullchain.pem
+      - --ssl-key=/run/tls/privkey.pem
+      - --require-secure-transport=ON
+    ports:
+      - "0.0.0.0:${MYSQL_PUBLIC_PORT:-3306}:3306"
+    volumes:
+      - /srv/vsm/mysql/data:/var/lib/mysql
+      - /srv/vsm/secrets/mysql/root_password:/run/secrets/root_password:ro
+      - /srv/vsm/secrets/mysql/controller_password:/run/secrets/controller_password:ro
+      - ./srv/infrastructure/databases/mysql/scripts/init-controller.sh:/docker-entrypoint-initdb.d/20-platform-controller.sh:ro
+      - /srv/vsm/tls/mysql/fullchain.pem:/run/tls/fullchain.pem:ro
+      - /srv/vsm/tls/mysql/ca.pem:/run/tls/ca.pem:ro
+      - /srv/vsm/tls/mysql/privkey.pem:/run/tls/privkey.pem:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$(cat /run/secrets/root_password) mysqladmin --protocol=socket -uroot ping --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    cpus: ${MYSQL_CPUS:-1.0}
+    mem_limit: ${MYSQL_MEMORY:-2g}
+    networks:
+      mysql_net:
+        aliases:
+          - mysql
+          - ${MYSQL_DOMAIN:-mysql.openmusk.store}
+
+  mongodb:
+    image: mongo:${MONGO_VERSION:-8.0}
+    container_name: platform-mongodb
+    restart: unless-stopped
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-Asia/Dhaka}
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/root_password
+    command:
+      - mongod
+      - --config
+      - /etc/mongod.conf
+      - --replSet
+      - rs0
+      - --auth
+      - --keyFile
+      - /run/secrets/replica_keyfile
+    volumes:
+      - /srv/vsm/mongodb/data:/data/db
+      - ./srv/infrastructure/databases/mongodb/config/mongod.conf:/etc/mongod.conf:ro
+      - /srv/vsm/secrets/mongodb/root_password:/run/secrets/root_password:ro
+      - /srv/vsm/secrets/mongodb/replica_keyfile:/run/secrets/replica_keyfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host 127.0.0.1 --port 27017 --username root --password $$(cat /run/secrets/root_password) --authenticationDatabase admin --eval \"quit(db.adminCommand('ping').ok ? 0 : 2)\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+    cpus: ${MONGO_CPUS:-1.0}
+    mem_limit: ${MONGO_MEMORY:-2g}
+    networks:
+      mongo_net:
+        aliases:
+          - mongodb
+
+  mongodb-init:
+    image: mongo:${MONGO_VERSION:-8.0}
+    container_name: platform-mongodb-init
+    restart: "no"
+    user: "0:0"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    entrypoint: ["sh", "/opt/vsm/init-replica.sh"]
+    environment:
+      MONGO_HOST: mongodb
+      MONGO_ROOT_USER: root
+      MONGO_CONTROLLER_USER: platform_controller
+      MONGO_REPLICA_SET: rs0
+    volumes:
+      - ./srv/infrastructure/databases/mongodb/scripts/init-replica.sh:/opt/vsm/init-replica.sh:ro
+      - /srv/vsm/secrets/mongodb/root_password:/run/secrets/root_password:ro
+      - /srv/vsm/secrets/mongodb/controller_password:/run/secrets/controller_password:ro
+    networks:
+      - mongo_net
+
+  mongodb-public:
+    image: haproxy:${HAPROXY_VERSION:-3.2-alpine}
+    container_name: platform-mongodb-public
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      cert-sync:
+        condition: service_completed_successfully
+    ports:
+      - "0.0.0.0:${MONGO_PUBLIC_PORT:-27017}:27017"
+    volumes:
+      - ./srv/infrastructure/databases/mongodb/config/haproxy-public.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - /srv/vsm/tls/mongodb/mongodb.pem:/run/tls/mongodb.pem:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/lib/haproxy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 27017"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      mongo_net:
+        aliases:
+          - mongodb-public
+
+  docker-agent:
+    image: node:22-alpine
+    container_name: platform-docker-agent
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+    command: ["node", "/app/agent.mjs"]
+    environment:
+      PORT: 8080
+      DOCKER_AGENT_TOKEN_FILE: /run/secrets/control_token
+      DOCKER_AGENT_LIMITS_FILE: /data/resource-limits.json
+      DOCKER_AGENT_HOST_PROC_PATH: /host/proc
+      DOCKER_AGENT_HOST_STORAGE_PATH: /host/storage
+      DOCKER_AGENT_ALLOWLIST: platform-admin,platform-postgres,platform-redis,platform-mysql,platform-mongodb,platform-mongodb-public,n8n,n8n-worker,platform-media,platform-proxy
+    volumes:
+      - ./srv/infrastructure/management/docker-agent/agent.mjs:/app/agent.mjs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/vsm/secrets/docker-agent/control_token:/run/secrets/control_token:ro
+      - /srv/vsm/docker-agent:/data
+      - /proc:/host/proc:ro
+      - /srv:/host/storage:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      management_net:
+        aliases:
+          - docker-agent
+
+  certbot-renew:
+    image: certbot/certbot:${CERTBOT_VERSION:-latest}
+    container_name: vsm-certbot-renew
+    restart: unless-stopped
+    depends_on:
+      cert-sync:
+        condition: service_completed_successfully
+      docker-agent:
+        condition: service_healthy
+    entrypoint: ["sh", "/opt/vsm/renew-loop.sh"]
+    environment:
+      CERTBOT_RENEW_INTERVAL_SECONDS: ${CERTBOT_RENEW_INTERVAL_SECONDS:-43200}
+      POSTGRES_DOMAIN: ${POSTGRES_DOMAIN:-db.openmusk.store}
+      REDIS_DOMAIN: ${REDIS_DOMAIN:-redis.openmusk.store}
+      MYSQL_DOMAIN: ${MYSQL_DOMAIN:-mysql.openmusk.store}
+      MONGO_DOMAIN: ${MONGO_DOMAIN:-mongo.openmusk.store}
+      TLS_ROOT: /srv/vsm/tls
+      DOCKER_AGENT_URL: http://docker-agent:8080
+      DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
+    volumes:
+      - /srv/vsm/letsencrypt:/etc/letsencrypt
+      - /srv/vsm/acme:/var/www/certbot
+      - /srv/vsm/tls:/srv/vsm/tls
+      - /srv/vsm/secrets/docker-agent/control_token:/run/secrets/docker_agent_token:ro
+      - ./deploy/certbot/renew-loop.sh:/opt/vsm/renew-loop.sh:ro
+      - ./deploy/certbot/sync-certs.sh:/opt/vsm/sync-certs.sh:ro
+    networks:
+      - management_net
+      - proxy_net
+
+  media-service:
+    build:
+      context: ./srv/apps/media-service
+      dockerfile: Dockerfile
+    container_name: platform-media
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      MEDIA_STORAGE_ROOT: /storage
+      MEDIA_DB_HOST: postgres
+      MEDIA_DB_PORT: "5432"
+      MEDIA_DB_NAME: media_service
+      MEDIA_DB_USER: media_app
+      MEDIA_DB_PASSWORD_FILE: /run/secrets/db_password
+      MEDIA_DB_POOL_MAX: 10
+      MEDIA_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      MEDIA_PUBLIC_BASE_URL: https://${MEDIA_DOMAIN:-media.openmusk.store}
+      MEDIA_PUBLIC_FILES_ENABLED: "true"
+      MEDIA_MAX_UPLOAD_BYTES: ${MEDIA_MAX_UPLOAD_BYTES:-536870912}
+      MEDIA_MIN_FREE_BYTES: ${MEDIA_MIN_FREE_BYTES:-5368709120}
+      MEDIA_ALLOW_OTHER_FILES: "false"
+    volumes:
+      - /srv/vsm/media/storage:/storage
+      - /srv/vsm/secrets/media/db_password:/run/secrets/db_password:ro
+      - /srv/vsm/secrets/media/admin_token:/run/secrets/admin_token:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    cpus: ${MEDIA_CPUS:-0.50}
+    mem_limit: ${MEDIA_MEMORY:-768m}
+    networks:
+      postgres_net:
+      media_net:
+        aliases:
+          - media-service
+      proxy_net:
+
+  platform-admin:
+    build:
+      context: ./srv/apps/platform-admin
+      dockerfile: Dockerfile
+    container_name: platform-admin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
+      docker-agent:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
+      AUTH_SESSION_SECRET_FILE: /run/secrets/auth_session_secret
+      AUTH_COOKIE_SECURE: "true"
+
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: postgres
+      PGUSER: platform_controller
+      PG_PASSWORD_FILE: /run/secrets/platform_controller_password
+      PG_PUBLIC_HOST: ${POSTGRES_DOMAIN:-db.openmusk.store}
+      PG_PUBLIC_PORT: ${POSTGRES_PUBLIC_PORT:-5432}
+      PG_PUBLIC_SSLMODE: verify-full
+      PLATFORM_DB_NAME: platform_admin
+      PLATFORM_DB_USER: platform_app
+      PLATFORM_DB_PASSWORD_FILE: /run/secrets/platform_app_password
+      CREDENTIAL_VAULT_KEY_FILE: /run/secrets/credential_vault_key
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_USER: platform_controller
+      REDIS_PASSWORD_FILE: /run/secrets/redis_controller_password
+      REDIS_APP_HOST: redis
+      REDIS_APP_PORT: 6379
+      REDIS_APP_DATABASE: 0
+      REDIS_PUBLIC_HOST: ${REDIS_DOMAIN:-redis.openmusk.store}
+      REDIS_PUBLIC_PORT: ${REDIS_PUBLIC_PORT:-6380}
+
+      MYSQL_HOST: ${MYSQL_DOMAIN:-mysql.openmusk.store}
+      MYSQL_PORT: 3306
+      MYSQL_CONTROLLER_USER: platform_controller
+      MYSQL_CONTROLLER_PASSWORD_FILE: /run/secrets/mysql_controller_password
+      MYSQL_TLS_ENABLED: "true"
+      MYSQL_APP_HOST: mysql
+      MYSQL_APP_PORT: 3306
+      MYSQL_PUBLIC_HOST: ${MYSQL_DOMAIN:-mysql.openmusk.store}
+      MYSQL_PUBLIC_PORT: ${MYSQL_PUBLIC_PORT:-3306}
+
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      MONGO_CONTROLLER_USER: platform_controller
+      MONGO_CONTROLLER_PASSWORD_FILE: /run/secrets/mongo_controller_password
+      MONGO_APP_HOST: mongodb
+      MONGO_APP_PORT: 27017
+      MONGO_REPLICA_SET: rs0
+      MONGO_PUBLIC_HOST: ${MONGO_DOMAIN:-mongo.openmusk.store}
+      MONGO_PUBLIC_PORT: ${MONGO_PUBLIC_PORT:-27017}
+
+      DOCKER_AGENT_URL: http://docker-agent:8080
+      DOCKER_AGENT_TOKEN_FILE: /run/secrets/docker_agent_token
+      MEDIA_SERVICE_URL: http://media-service:8080
+      MEDIA_ADMIN_TOKEN_FILE: /run/secrets/media_admin_token
+    volumes:
+      - /srv/vsm/secrets/platform-admin/admin_password_hash:/run/secrets/admin_password_hash:ro
+      - /srv/vsm/secrets/platform-admin/auth_session_secret:/run/secrets/auth_session_secret:ro
+      - /srv/vsm/secrets/platform-admin/credential_vault_key:/run/secrets/credential_vault_key:ro
+      - /srv/vsm/secrets/platform-admin/postgres_controller_password:/run/secrets/platform_controller_password:ro
+      - /srv/vsm/secrets/platform-admin/platform_app_password:/run/secrets/platform_app_password:ro
+      - /srv/vsm/secrets/platform-admin/redis_controller_password:/run/secrets/redis_controller_password:ro
+      - /srv/vsm/secrets/platform-admin/mysql_controller_password:/run/secrets/mysql_controller_password:ro
+      - /srv/vsm/secrets/platform-admin/mongo_controller_password:/run/secrets/mongo_controller_password:ro
+      - /srv/vsm/secrets/platform-admin/docker_agent_token:/run/secrets/docker_agent_token:ro
+      - /srv/vsm/secrets/platform-admin/media_admin_token:/run/secrets/media_admin_token:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    cpus: ${PLATFORM_ADMIN_CPUS:-0.75}
+    mem_limit: ${PLATFORM_ADMIN_MEMORY:-768m}
+    networks:
+      - proxy_net
+      - postgres_net
+      - redis_net
+      - mysql_net
+      - mongo_net
+      - management_net
+      - media_net
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.38.7}
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    entrypoint: ["tini", "--", "sh", "/opt/n8n/entrypoint.sh"]
+    command: ["start"]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n_app
+      DB_POSTGRESDB_SCHEMA: public
+      EXECUTIONS_MODE: queue
+      OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+      QUEUE_BULL_REDIS_HOST: redis
+      QUEUE_BULL_REDIS_PORT: "6379"
+      QUEUE_BULL_REDIS_USERNAME: n8n_queue
+      QUEUE_BULL_REDIS_DB: "1"
+      QUEUE_BULL_PREFIX: n8n
+      QUEUE_BULL_REDIS_TLS: "false"
+      N8N_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      N8N_DEFAULT_BINARY_DATA_MODE: database
+      N8N_HOST: ${N8N_DOMAIN:-n8n.openmusk.store}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      N8N_WEBHOOK_URL: https://${N8N_DOMAIN:-n8n.openmusk.store}/
+      N8N_EDITOR_BASE_URL: https://${N8N_DOMAIN:-n8n.openmusk.store}/
+      N8N_PROXY_HOPS: "1"
+      GENERIC_TIMEZONE: ${TZ:-Asia/Dhaka}
+      TZ: ${TZ:-Asia/Dhaka}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_SECURE_COOKIE: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "true"
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+      N8N_LOG_OUTPUT: console
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${N8N_EXECUTIONS_DATA_MAX_AGE:-336}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${N8N_EXECUTIONS_DATA_PRUNE_MAX_COUNT:-10000}
+      N8N_DB_PASSWORD_FILE: /run/secrets/db_password
+      N8N_ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+    volumes:
+      - /srv/vsm/n8n/data:/home/node/.n8n
+      - ./srv/apps/n8n/entrypoint.sh:/opt/n8n/entrypoint.sh:ro
+      - /srv/vsm/secrets/n8n/db_password:/run/secrets/db_password:ro
+      - /srv/vsm/secrets/n8n/encryption_key:/run/secrets/encryption_key:ro
+      - /srv/vsm/secrets/n8n/redis_password:/run/secrets/redis_password:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5678/healthz/readiness').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    cpus: ${N8N_CPUS:-1.0}
+    mem_limit: ${N8N_MEMORY:-1536m}
+    networks:
+      - proxy_net
+      - postgres_net
+      - redis_net
+      - mysql_net
+      - mongo_net
+      - media_net
+
+  n8n-worker:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.38.7}
+    container_name: n8n-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    entrypoint: ["tini", "--", "sh", "/opt/n8n/entrypoint.sh"]
+    command: ["worker", "--concurrency=${N8N_WORKER_CONCURRENCY:-5}"]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n_app
+      DB_POSTGRESDB_SCHEMA: public
+      EXECUTIONS_MODE: queue
+      QUEUE_BULL_REDIS_HOST: redis
+      QUEUE_BULL_REDIS_PORT: "6379"
+      QUEUE_BULL_REDIS_USERNAME: n8n_queue
+      QUEUE_BULL_REDIS_DB: "1"
+      QUEUE_BULL_PREFIX: n8n
+      QUEUE_BULL_REDIS_TLS: "false"
+      QUEUE_HEALTH_CHECK_ACTIVE: "true"
+      QUEUE_HEALTH_CHECK_PORT: "5678"
+      N8N_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      N8N_DEFAULT_BINARY_DATA_MODE: database
+      GENERIC_TIMEZONE: ${TZ:-Asia/Dhaka}
+      TZ: ${TZ:-Asia/Dhaka}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+      N8N_LOG_OUTPUT: console
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
+      N8N_DB_PASSWORD_FILE: /run/secrets/db_password
+      N8N_ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+    volumes:
+      - ./srv/apps/n8n/entrypoint.sh:/opt/n8n/entrypoint.sh:ro
+      - /srv/vsm/secrets/n8n/db_password:/run/secrets/db_password:ro
+      - /srv/vsm/secrets/n8n/encryption_key:/run/secrets/encryption_key:ro
+      - /srv/vsm/secrets/n8n/redis_password:/run/secrets/redis_password:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5678/healthz/readiness').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    cpus: ${N8N_WORKER_CPUS:-1.0}
+    mem_limit: ${N8N_WORKER_MEMORY:-2g}
+    networks:
+      - postgres_net
+      - redis_net
+      - mysql_net
+      - mongo_net
+      - media_net
+
+  vsm-smoke:
+    image: vsm-toolbox:local
+    container_name: vsm-smoke
+    restart: "no"
+    depends_on:
+      platform-admin:
+        condition: service_healthy
+      n8n:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
+      mongodb-public:
+        condition: service_healthy
+    command: ["node", "/opt/vsm/smoke-test.mjs"]
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.openmusk.store}
+      N8N_DOMAIN: ${N8N_DOMAIN:-n8n.openmusk.store}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.openmusk.store}
+      REDIS_DOMAIN: ${REDIS_DOMAIN:-redis.openmusk.store}
+      MONGO_DOMAIN: ${MONGO_DOMAIN:-mongo.openmusk.store}
+      SMOKE_EXTERNAL_STRICT: ${SMOKE_EXTERNAL_STRICT:-false}
+    networks:
+      - proxy_net
+      - postgres_net
+      - redis_net
+      - mysql_net
+      - mongo_net
+      - media_net
+
+networks:
+  proxy_net:
+    name: proxy_net
+    driver: bridge
+  postgres_net:
+    name: postgres_net
+    driver: bridge
+  redis_net:
+    name: redis_net
+    driver: bridge
+  mysql_net:
+    name: mysql_net
+    driver: bridge
+  mongo_net:
+    name: mongo_net
+    driver: bridge
+  management_net:
+    name: management_net
+    driver: bridge
+  media_net:
+    name: media_net
+    driver: bridge
