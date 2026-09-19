@@ -4,6 +4,7 @@ set -eu
 DB_PASSWORD_FILE="${N8N_DB_PASSWORD_FILE:-/run/secrets/db_password}"
 ENCRYPTION_KEY_FILE="${N8N_ENCRYPTION_KEY_FILE:-/run/secrets/encryption_key}"
 REDIS_PASSWORD_FILE="${N8N_REDIS_PASSWORD_FILE:-/run/secrets/redis_password}"
+SAAS_INTERNAL_SECRET_FILE="${SAAS_INTERNAL_SERVICE_AUTH_SECRET_FILE:-}"
 
 if [ ! -r "$DB_PASSWORD_FILE" ]; then
   echo "n8n database password file is not readable: $DB_PASSWORD_FILE" >&2
@@ -42,6 +43,19 @@ fi
 export DB_POSTGRESDB_PASSWORD="$DB_PASSWORD"
 export N8N_ENCRYPTION_KEY="$ENCRYPTION_KEY"
 export QUEUE_BULL_REDIS_PASSWORD="$REDIS_PASSWORD"
+
+if [ -n "$SAAS_INTERNAL_SECRET_FILE" ]; then
+  if [ ! -r "$SAAS_INTERNAL_SECRET_FILE" ]; then
+    echo "SaaS internal service auth secret file is not readable: $SAAS_INTERNAL_SECRET_FILE" >&2
+    exit 1
+  fi
+  INTERNAL_SERVICE_AUTH_SECRET="$(cat "$SAAS_INTERNAL_SECRET_FILE")"
+  if [ -z "$INTERNAL_SERVICE_AUTH_SECRET" ]; then
+    echo "SaaS internal service auth secret is empty" >&2
+    exit 1
+  fi
+  export INTERNAL_SERVICE_AUTH_SECRET
+fi
 
 unset DB_PASSWORD ENCRYPTION_KEY REDIS_PASSWORD
 
