@@ -1,0 +1,46 @@
+name: Validate VSM
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare Compose environment
+        run: cp .env.example .env
+
+      - name: Validate Docker Compose
+        run: docker compose config >/tmp/vsm-compose.resolved.yml
+
+      - name: Validate shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            bootstrap.sh \
+            deploy/postgres/provision-automation.sh \
+            deploy/redis/entrypoint.sh \
+            deploy/nginx/entrypoint.sh \
+            deploy/certbot/issue-certs.sh \
+            srv/apps/n8n/entrypoint.sh \
+            srv/apps/automation-service/entrypoint.sh
+          do
+            sh -n "$file"
+          done
+
+      - name: Validate Node scripts
+        run: |
+          node --check deploy/scripts/init-secrets.mjs
+          node --check deploy/scripts/smoke-test.mjs
+
+      - name: Verify automation services are resolved
+        run: |
+          grep -q '^  automation-api:' /tmp/vsm-compose.resolved.yml
+          grep -q '^  automation-worker:' /tmp/vsm-compose.resolved.yml
+          grep -q '^  automation-migrate:' /tmp/vsm-compose.resolved.yml
+          grep -q '^  automation-db-init:' /tmp/vsm-compose.resolved.yml
