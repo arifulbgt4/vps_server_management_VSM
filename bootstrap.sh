@@ -40,7 +40,7 @@ if [[ ! -f .env && -f .env.example ]]; then
 fi
 
 echo
-echo "Before certificate issuance, all configured A records must point to this VPS."
+echo "Before certificate issuance, all configured A records (including API_DOMAIN) must point to this VPS."
 echo "Provider firewall must allow TCP: 22, 80, 443, 5432, 6380, 3306, 27017."
 echo
 
@@ -52,3 +52,4 @@ echo "VSM deployment started."
 echo "Initial admin password will be stored at: /srv/vsm/bootstrap/admin_initial_password"
 echo "Check status with: docker compose ps"
 echo "Check smoke test with: docker compose logs vsm-smoke"
+echo "Automation API health: https://${API_DOMAIN:-api.openmusk.store}/healthz"
