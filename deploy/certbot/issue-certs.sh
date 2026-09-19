@@ -7,6 +7,7 @@ domains="
 ${ADMIN_DOMAIN:-admin.openmusk.store}
 ${N8N_DOMAIN:-n8n.openmusk.store}
 ${MEDIA_DOMAIN:-media.openmusk.store}
+${API_DOMAIN:-api.openmusk.store}
 ${POSTGRES_DOMAIN:-db.openmusk.store}
 ${REDIS_DOMAIN:-redis.openmusk.store}
 ${MYSQL_DOMAIN:-mysql.openmusk.store}
