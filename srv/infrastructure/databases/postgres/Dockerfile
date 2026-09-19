@@ -4,7 +4,6 @@ FROM postgres:${POSTGRES_VERSION}
 ARG PGVECTOR_VERSION=0.8.6
 
 RUN set -eux; \
-    apk upgrade --no-cache; \
     apk add --no-cache --virtual .pgvector-build-deps \
       build-base \
       git \
