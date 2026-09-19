@@ -88,6 +88,10 @@ const values = {
   mediaDb: readOrCreate(join(MASTER, "media_db_password"), () => randomSecret(32)),
   redisController: readOrCreate(join(MASTER, "redis_controller_password"), () => randomSecret(32)),
   n8nRedis: readOrCreate(join(MASTER, "n8n_redis_password"), () => randomSecret(32)),
+  automationDb: readOrCreate(join(MASTER, "automation_db_password"), () => randomSecret(32)),
+  automationRedis: readOrCreate(join(MASTER, "automation_redis_password"), () => randomSecret(32)),
+  automationEncryption: readOrCreate(join(MASTER, "automation_app_encryption_key"), () => randomBytes(32).toString("hex")),
+  automationInternalAuth: readOrCreate(join(MASTER, "automation_internal_service_auth_secret"), () => randomSecret(48)),
   mysqlRoot: readOrCreate(join(MASTER, "mysql_root_password"), () => randomSecret(32)),
   mysqlController: readOrCreate(join(MASTER, "mysql_controller_password"), () => randomSecret(32)),
   mongoRoot: readOrCreate(join(MASTER, "mongo_root_password"), () => randomSecret(32)),
@@ -123,6 +127,7 @@ const copies = [
 
   ["redis/platform_controller_password", values.redisController, uid.root],
   ["redis/n8n_queue_password", values.n8nRedis, uid.root],
+  ["redis/automation_app_password", values.automationRedis, uid.root],
 
   ["mysql/root_password", values.mysqlRoot, uid.db],
   ["mysql/controller_password", values.mysqlController, uid.db],
@@ -134,6 +139,11 @@ const copies = [
   ["n8n/db_password", values.n8nDb, uid.node],
   ["n8n/redis_password", values.n8nRedis, uid.node],
   ["n8n/encryption_key", values.n8nEncryption, uid.node],
+
+  ["automation/db_password", values.automationDb, uid.node],
+  ["automation/redis_password", values.automationRedis, uid.node],
+  ["automation/app_encryption_key", values.automationEncryption, uid.node],
+  ["automation/internal_service_auth_secret", values.automationInternalAuth, uid.node],
 
   ["media/db_password", values.mediaDb, uid.node],
   ["media/admin_token", values.mediaAdminToken, uid.node],
