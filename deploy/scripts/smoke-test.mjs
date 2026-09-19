@@ -65,6 +65,7 @@ const internal = [
   ["media-service", 8080],
   ["platform-admin", 3000],
   ["n8n", 5678],
+  ["automation-api", 4000],
 ];
 
 let failed = false;
@@ -83,6 +84,8 @@ for (const url of [
   "http://platform-admin:3000/api/health",
   "http://media-service:8080/healthz",
   "http://n8n:5678/healthz/readiness",
+  "http://automation-api:4000/healthz",
+  "http://automation-api:4000/readyz",
 ]) {
   try {
     await http(url);
@@ -112,6 +115,7 @@ const externalUrls = [
   `https://${process.env.ADMIN_DOMAIN || "admin.openmusk.store"}/api/health`,
   `https://${process.env.MEDIA_DOMAIN || "media.openmusk.store"}/healthz`,
   `https://${process.env.N8N_DOMAIN || "n8n.openmusk.store"}/healthz/readiness`,
+  `https://${process.env.API_DOMAIN || "api.openmusk.store"}/healthz`,
 ];
 
 for (const url of externalUrls) {
