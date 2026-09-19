@@ -178,3 +178,13 @@ Repository code being present does not mean a service is already running on the 
 ## Secrets
 
 Do not commit any file from a `secrets/` directory, private key, password, bearer token, Redis credential, credential-vault master key, n8n encryption key, media admin token, MySQL root/controller credential, MongoDB root/controller/keyfile, or generated application credential.
+
+## n8n Automation SaaS runtime
+
+VSM now hosts the backend runtime from `arifulbgt4/n8n-automation` while Customer Panel and Super Admin can run locally.
+
+New runtime services: `automation-db-init`, `automation-migrate`, `automation-api`, and `automation-worker`. The existing `n8n-worker` remains the n8n execution worker and is not replaced.
+
+PostgreSQL stays on the Alpine PostgreSQL 17 base and gains pgvector capability. The `vector` extension is enabled only in the SaaS `app_db`, so other VSM databases continue to behave as normal PostgreSQL databases.
+
+Deployment and update commands: **[docs/AUTOMATION_SERVICE.md](docs/AUTOMATION_SERVICE.md)**
