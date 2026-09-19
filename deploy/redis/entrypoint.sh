@@ -29,7 +29,7 @@ fi
   printf 'user default off\n'
   printf 'user platform_controller on >%s ~* &* +@all\n' "$CONTROLLER_PASSWORD"
   printf 'user n8n_queue on >%s ~* &* +@all\n' "$N8N_PASSWORD"
-  printf 'user automation_app on >%s ~n8nauto:production:* &* +@all\n' "$AUTOMATION_PASSWORD"
+  printf 'user automation_app on >%s ~n8nauto:* &* +@all\n' "$AUTOMATION_PASSWORD"
   cat "$PRESERVED"
 } > "$TMP_FILE"
 
