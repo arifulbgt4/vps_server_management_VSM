@@ -21,8 +21,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash -n bootstrap.sh
           for file in \
-            bootstrap.sh \
             deploy/postgres/provision-automation.sh \
             deploy/redis/entrypoint.sh \
             deploy/nginx/entrypoint.sh \
