@@ -45,6 +45,31 @@ echo "Provider firewall must allow TCP: 22, 80, 443, 5432, 6380, 3306, 27017."
 echo
 
 docker compose config >/dev/null
+
+pull_with_retry() {
+  local image="$1"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    echo "Pulling ${image} (attempt ${attempt}/5)..."
+    if docker pull "$image"; then
+      return 0
+    fi
+    sleep $((attempt * 3))
+  done
+
+  echo "Failed to pull ${image} after 5 attempts." >&2
+  echo "If the error mentions auth.docker.io over an IPv6 address, test the VPS IPv4/IPv6 registry path before retrying." >&2
+  echo "Useful checks:" >&2
+  echo "  curl -4 -I https://auth.docker.io/" >&2
+  echo "  curl -6 -I https://auth.docker.io/" >&2
+  return 1
+}
+
+mapfile -t external_images < <(docker compose config --images | grep -v '^vsm-' | sort -u)
+for image in "${external_images[@]}"; do
+  pull_with_retry "$image"
+done
+
 docker compose up -d --build
 
 echo
