@@ -17,6 +17,44 @@ Current tracked version: `1.0.0`.
 
 All management routes require the Platform Admin session.
 
+## Login credentials
+
+Production login URL:
+
+```text
+https://admin.openmusk.store
+```
+
+The username is configured by `ADMIN_USERNAME` in the root VSM `.env` and defaults to `admin`.
+
+Show the effective configured value:
+
+```bash
+cd ~/srv
+ADMIN_USER="$(grep -E '^ADMIN_USERNAME=' .env | tail -n1 | cut -d= -f2-)"
+printf '%s\n' "${ADMIN_USER:-admin}"
+```
+
+Show the generated initial or most recently reset password:
+
+```bash
+sudo cat /srv/vsm/bootstrap/admin_initial_password
+```
+
+If that plaintext recovery file has been deleted, the password cannot be recovered from its scrypt hash and must be reset.
+
+To change only the username, edit `ADMIN_USERNAME` in the root `.env`, then recreate the service:
+
+```bash
+docker compose up -d --force-recreate platform-admin
+```
+
+To change/reset the password, do not merely change `VSM_ADMIN_PASSWORD` in `.env`; the existing persisted hash is intentionally reused. Follow the reset procedure in:
+
+**[../../../docs/PLATFORM_ADMIN_ACCESS.md](../../../docs/PLATFORM_ADMIN_ACCESS.md)**
+
+The reset procedure rotates the Platform Admin auth-session secret so existing authenticated sessions are invalidated, while unrelated database, Redis, n8n, media, and automation credentials remain unchanged.
+
 ## Credential vault
 
 Recoverable application credentials are encrypted with AES-256-GCM. The master key stays only on the VPS:
