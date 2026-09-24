@@ -1,0 +1,15 @@
+# Local build bindings for images that are intentionally not published to a registry.
+# Docker Compose automatically merges this file with compose.yml.
+services:
+  automation-db-init:
+    build:
+      context: ./srv/infrastructure/databases/postgres
+      dockerfile: Dockerfile
+      args:
+        POSTGRES_VERSION: ${POSTGRES_VERSION:-17-alpine}
+        PGVECTOR_VERSION: ${PGVECTOR_VERSION:-0.8.6}
+
+  vsm-smoke:
+    build:
+      context: .
+      dockerfile: Dockerfile
