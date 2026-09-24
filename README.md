@@ -46,6 +46,10 @@ Complete production architecture, security rules, deployment procedures, verific
 
 **[docs/PRODUCTION_SETUP.md](docs/PRODUCTION_SETUP.md)**
 
+Platform Admin login, password retrieval, username change, password reset and session invalidation:
+
+**[docs/PLATFORM_ADMIN_ACCESS.md](docs/PLATFORM_ADMIN_ACCESS.md)**
+
 MongoDB design history and acceptance plan:
 
 **[docs/MONGODB_IMPLEMENTATION_PLAN.md](docs/MONGODB_IMPLEMENTATION_PLAN.md)**
@@ -88,6 +92,14 @@ Management modules:
 /docker
 /media
 ```
+
+After first bootstrap, the generated Platform Admin password can be read with:
+
+```bash
+sudo cat /srv/vsm/bootstrap/admin_initial_password
+```
+
+The effective username comes from `ADMIN_USERNAME` in the root `.env` and defaults to `admin`. For changing the username or securely resetting the password, follow **[docs/PLATFORM_ADMIN_ACCESS.md](docs/PLATFORM_ADMIN_ACCESS.md)**. Changing `VSM_ADMIN_PASSWORD` in `.env` alone does not change an already initialized password because the persisted password hash is reused.
 
 PostgreSQL, MySQL, MongoDB, Redis and Media credentials that must be recoverable are stored encrypted with the existing AES-256-GCM credential vault. Database root/bootstrap secrets are never exposed to the browser and are not mounted into Platform Admin.
 
