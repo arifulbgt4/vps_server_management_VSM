@@ -12,6 +12,7 @@ services:
   automation-api:
     environment:
       N8N_WORKFLOW_BUNDLE_VERSION: ${AUTOMATION_N8N_BUNDLE_VERSION:-2.0.0}
+      META_BUSINESS_LOGIN_CONFIG_ID: ${AUTOMATION_META_BUSINESS_LOGIN_CONFIG_ID:-}
 
   automation-worker:
     environment:
