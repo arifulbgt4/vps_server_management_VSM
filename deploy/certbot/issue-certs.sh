@@ -39,7 +39,43 @@ if [ "${ACME_STAGING:-false}" = "true" ]; then
   staging_args="--staging"
 fi
 
+certificate_is_fresh() {
+  domain="$1"
+  cert_path="/etc/letsencrypt/live/$domain/fullchain.pem"
+
+  if [ ! -r "$cert_path" ]; then
+    return 1
+  fi
+
+  python3 - "$cert_path" <<'PY'
+import ssl
+import sys
+import time
+
+path = sys.argv[1]
+renew_before_days = 30
+
+try:
+    certificate = ssl._ssl._test_decode_cert(path)
+    not_after = certificate.get("notAfter")
+    if not not_after:
+        raise ValueError("certificate has no notAfter field")
+    expires_at = ssl.cert_time_to_seconds(not_after)
+except Exception as exc:
+    print(f"Unable to validate existing certificate {path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+minimum_expiry = time.time() + (renew_before_days * 24 * 60 * 60)
+sys.exit(0 if expires_at > minimum_expiry else 1)
+PY
+}
+
 for domain in $domains; do
+  if certificate_is_fresh "$domain"; then
+    echo "Existing certificate for $domain is valid beyond the 30-day renewal window; skipping ACME request."
+    continue
+  fi
+
   echo "Ensuring Let's Encrypt certificate for $domain"
   certbot certonly \
     --webroot \
