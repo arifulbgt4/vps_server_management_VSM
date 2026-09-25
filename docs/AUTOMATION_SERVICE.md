@@ -59,6 +59,7 @@ AUTOMATION_REF=master
 AUTOMATION_QUEUE_PREFIX=n8nauto:production
 AUTOMATION_CUSTOMER_APP_ORIGIN=http://localhost:3000
 AUTOMATION_ADMIN_APP_ORIGIN=http://localhost:3001
+AUTOMATION_N8N_BUNDLE_VERSION=2.0.0
 ```
 
 Do not commit the VPS `.env`.
@@ -145,13 +146,19 @@ The SaaS backend uses Redis DB 0, user `automation_app`, prefix `n8nauto:product
 
 ## 9. n8n and n8n-worker
 
-Do not replace the existing `n8n-worker`. VSM injects these values into both n8n main and n8n worker:
+Do not replace the existing `n8n-worker`. Queue-mode workflow executions can run on `n8n-worker`, so both n8n main and n8n worker must receive the same workflow runtime configuration.
+
+The root `compose.override.yaml` injects the bundle-2 runtime values into both services:
 
 ```text
+N8N_BLOCK_ENV_ACCESS_IN_NODE=false
 SAAS_API_INTERNAL_URL=http://automation-api:4000
-INTERNAL_SERVICE_AUTH_SECRET=<shared generated secret>
-N8N_WORKFLOW_BUNDLE_VERSION=1.0.0
+INTERNAL_SERVICE_AUTH_SECRET=<loaded by entrypoint from the shared secret file>
+N8N_INTERNAL_WEBHOOK_BASE_URL=http://n8n:5678
+N8N_WORKFLOW_BUNDLE_VERSION=2.0.0
 ```
+
+`N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required because the version-controlled workflow bundle intentionally references the platform-owned variables above through n8n `$env` expressions. Restrict production n8n editor access to trusted platform administrators.
 
 After changing this integration, recreate both n8n services:
 
@@ -159,7 +166,23 @@ After changing this integration, recreate both n8n services:
 docker compose up -d --force-recreate n8n n8n-worker
 ```
 
+Verify the effective runtime configuration:
+
+```bash
+docker exec n8n env | grep -E 'N8N_BLOCK_ENV_ACCESS_IN_NODE|N8N_WORKFLOW_BUNDLE_VERSION|SAAS_API_INTERNAL_URL|N8N_INTERNAL_WEBHOOK_BASE_URL'
+docker exec n8n-worker env | grep -E 'N8N_BLOCK_ENV_ACCESS_IN_NODE|N8N_WORKFLOW_BUNDLE_VERSION|SAAS_API_INTERNAL_URL|N8N_INTERNAL_WEBHOOK_BASE_URL'
+```
+
+Expected bundle version is `2.0.0` and env access should be `false` for the block flag.
+
 ## 10. Deploy the n8n-automation workflow bundle
+
+The final version-controlled workflow bundle is `2.0.0` and contains seven workflows. Rebuild `automation-api` before deploying whenever `AUTOMATION_REF=master` has changed, otherwise the deployment command can still contain an older workflow bundle cached in the image.
+
+```bash
+docker compose build --pull --no-cache automation-api
+docker compose up -d --force-recreate automation-migrate automation-api automation-worker
+```
 
 Create an n8n API key from the n8n UI, then on the VPS:
 
@@ -177,7 +200,9 @@ docker compose run --rm --no-deps \
   automation-api npm run n8n:plan
 ```
 
-Deploy inactive:
+The dry run should report bundle `2.0.0` and seven workflows.
+
+Deploy all seven workflows inactive:
 
 ```bash
 docker compose run --rm --no-deps \
@@ -187,16 +212,31 @@ docker compose run --rm --no-deps \
   automation-api npm run n8n:deploy
 ```
 
-Activate after reviewing trigger conflicts:
+Activate only after reviewing the plan. For the bundle-1 to bundle-2 production cutover, allow the deployer to deactivate stale SaaS webhook/scheduled workflows so old follow-up, maintenance, and heartbeat jobs do not run in parallel:
 
 ```bash
 docker compose run --rm --no-deps \
   -e N8N_API_URL=http://n8n:5678 \
   -e N8N_API_KEY="$N8N_API_KEY" \
   -e SAAS_API_INTERNAL_URL=http://automation-api:4000 \
-  automation-api npm run n8n:deploy:activate
+  automation-api npm run n8n:deploy:activate -- --deactivate-conflicts
+```
+
+Then:
+
+```bash
 unset N8N_API_KEY
 ```
+
+Verify health:
+
+```bash
+curl -i https://n8n.openmusk.store/webhook/saas-health
+```
+
+Expected response is HTTP 200 with bundle `2.0.0`.
+
+If n8n logs say `access to env vars denied`, recreate both n8n services and verify `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` inside both containers. If n8n logs say `saas-health is not registered`, workflow 07 is not active/registered yet; complete the bundle deployment and activation step.
 
 ## 11. Create a SaaS Super Admin
 
