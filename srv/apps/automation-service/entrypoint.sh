@@ -25,7 +25,9 @@ if [ -r /run/secrets/media_admin_token ]; then
   [ -n "$MEDIA_ADMIN_TOKEN" ] && export MEDIA_ADMIN_TOKEN
 fi
 
-unset DB_PASSWORD REDIS_PASSWORD APP_KEY INTERNAL_SECRET MEDIA_ADMIN_TOKEN
+# Clear only the temporary source variables. MEDIA_ADMIN_TOKEN must remain
+# exported so the API/worker process can provision tenant-scoped media accounts.
+unset DB_PASSWORD REDIS_PASSWORD APP_KEY INTERNAL_SECRET
 
 case "${1:-api}" in
   api) exec node apps/api/dist/server.js ;;
