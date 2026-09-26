@@ -59,6 +59,8 @@ AUTOMATION_REF=master
 AUTOMATION_QUEUE_PREFIX=n8nauto:production
 AUTOMATION_CUSTOMER_APP_ORIGIN=https://app.openmusk.store
 AUTOMATION_ADMIN_APP_ORIGIN=https://saas-admin.openmusk.store
+AUTOMATION_CUSTOMER_APP_ALLOWED_ORIGINS=https://automation-fwi.vercel.app
+AUTOMATION_ADMIN_APP_ALLOWED_ORIGINS=https://n8n-automation-super-admin.vercel.app
 AUTOMATION_N8N_BUNDLE_VERSION=2.0.0
 ```
 
