@@ -64,6 +64,8 @@ const internal = [
   ["mongodb", 27017],
   ["media-service", 8080],
   ["platform-admin", 3000],
+  ["automation-customer-panel", 3000],
+  ["automation-super-admin-panel", 3001],
   ["n8n", 5678],
   ["automation-api", 4000],
 ];
@@ -82,6 +84,8 @@ for (const [host, port] of internal) {
 
 for (const url of [
   "http://platform-admin:3000/api/health",
+  "http://automation-customer-panel:3000/",
+  "http://automation-super-admin-panel:3001/",
   "http://media-service:8080/healthz",
   "http://n8n:5678/healthz/readiness",
   "http://automation-api:4000/healthz",
@@ -113,6 +117,8 @@ for (const [host, port, servername] of tlsChecks) {
 
 const externalUrls = [
   `https://${process.env.ADMIN_DOMAIN || "admin.openmusk.store"}/api/health`,
+  `https://${process.env.CUSTOMER_DOMAIN || "app.openmusk.store"}/`,
+  `https://${process.env.SUPER_ADMIN_DOMAIN || "saas-admin.openmusk.store"}/`,
   `https://${process.env.MEDIA_DOMAIN || "media.openmusk.store"}/healthz`,
   `https://${process.env.N8N_DOMAIN || "n8n.openmusk.store"}/healthz/readiness`,
   `https://${process.env.API_DOMAIN || "api.openmusk.store"}/healthz`,

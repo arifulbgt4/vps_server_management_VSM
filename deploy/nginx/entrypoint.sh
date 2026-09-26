@@ -3,6 +3,8 @@ set -eu
 
 required_domains="
 ${ADMIN_DOMAIN:-admin.openmusk.store}
+${CUSTOMER_DOMAIN:-app.openmusk.store}
+${SUPER_ADMIN_DOMAIN:-saas-admin.openmusk.store}
 ${N8N_DOMAIN:-n8n.openmusk.store}
 ${MEDIA_DOMAIN:-media.openmusk.store}
 ${API_DOMAIN:-api.openmusk.store}
@@ -34,7 +36,7 @@ while :; do
   sleep 2
 done
 
-envsubst '${ADMIN_DOMAIN} ${N8N_DOMAIN} ${MEDIA_DOMAIN} ${API_DOMAIN}' \
+envsubst '${ADMIN_DOMAIN} ${CUSTOMER_DOMAIN} ${SUPER_ADMIN_DOMAIN} ${N8N_DOMAIN} ${MEDIA_DOMAIN} ${API_DOMAIN}' \
   < /opt/vsm/nginx.conf.template \
   > /etc/nginx/nginx.conf
 

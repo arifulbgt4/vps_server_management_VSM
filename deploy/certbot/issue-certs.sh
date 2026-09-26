@@ -5,6 +5,8 @@ set -eu
 
 domains="
 ${ADMIN_DOMAIN:-admin.openmusk.store}
+${CUSTOMER_DOMAIN:-app.openmusk.store}
+${SUPER_ADMIN_DOMAIN:-saas-admin.openmusk.store}
 ${N8N_DOMAIN:-n8n.openmusk.store}
 ${MEDIA_DOMAIN:-media.openmusk.store}
 ${API_DOMAIN:-api.openmusk.store}

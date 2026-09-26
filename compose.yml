@@ -9,6 +9,28 @@ x-automation-image: &automation-image
       AUTOMATION_REPOSITORY: ${AUTOMATION_REPOSITORY:-https://github.com/arifulbgt4/n8n-automation.git}
       AUTOMATION_REF: ${AUTOMATION_REF:-master}
 
+x-customer-panel-image: &customer-panel-image
+  image: vsm-n8n-customer-panel:${AUTOMATION_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: ./srv/apps/automation-panel/Dockerfile
+    args:
+      AUTOMATION_REPOSITORY: ${AUTOMATION_REPOSITORY:-https://github.com/arifulbgt4/n8n-automation.git}
+      AUTOMATION_REF: ${AUTOMATION_REF:-master}
+      PANEL_WORKSPACE: customer-panel
+      PANEL_PORT: "3000"
+
+x-super-admin-panel-image: &super-admin-panel-image
+  image: vsm-n8n-super-admin-panel:${AUTOMATION_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: ./srv/apps/automation-panel/Dockerfile
+    args:
+      AUTOMATION_REPOSITORY: ${AUTOMATION_REPOSITORY:-https://github.com/arifulbgt4/n8n-automation.git}
+      AUTOMATION_REF: ${AUTOMATION_REF:-master}
+      PANEL_WORKSPACE: super-admin-panel
+      PANEL_PORT: "3001"
+
 services:
   vsm-init:
     build:
@@ -35,6 +57,8 @@ services:
     entrypoint: ["sh", "/opt/vsm/nginx-entrypoint.sh"]
     environment:
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.openmusk.store}
+      CUSTOMER_DOMAIN: ${CUSTOMER_DOMAIN:-app.openmusk.store}
+      SUPER_ADMIN_DOMAIN: ${SUPER_ADMIN_DOMAIN:-saas-admin.openmusk.store}
       N8N_DOMAIN: ${N8N_DOMAIN:-n8n.openmusk.store}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.openmusk.store}
       API_DOMAIN: ${API_DOMAIN:-api.openmusk.store}
@@ -71,6 +95,8 @@ services:
       ACME_STAGING: ${ACME_STAGING:-false}
       PUBLIC_IPV4: ${PUBLIC_IPV4:-}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.openmusk.store}
+      CUSTOMER_DOMAIN: ${CUSTOMER_DOMAIN:-app.openmusk.store}
+      SUPER_ADMIN_DOMAIN: ${SUPER_ADMIN_DOMAIN:-saas-admin.openmusk.store}
       N8N_DOMAIN: ${N8N_DOMAIN:-n8n.openmusk.store}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.openmusk.store}
       API_DOMAIN: ${API_DOMAIN:-api.openmusk.store}
@@ -599,6 +625,56 @@ services:
       - postgres_net
       - redis_net
       - media_net
+
+  automation-customer-panel:
+    <<: *customer-panel-image
+    container_name: automation-customer-panel
+    restart: unless-stopped
+    depends_on:
+      automation-api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      NEXT_PUBLIC_API_URL: /api
+      API_PROXY_TARGET: http://automation-api:4000
+      API_PROXY_INSECURE_COOKIES: "false"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    cpus: ${AUTOMATION_PANEL_CPUS:-0.50}
+    mem_limit: ${AUTOMATION_PANEL_MEMORY:-512m}
+    networks:
+      - proxy_net
+
+  automation-super-admin-panel:
+    <<: *super-admin-panel-image
+    container_name: automation-super-admin-panel
+    restart: unless-stopped
+    depends_on:
+      automation-api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3001"
+      NEXT_PUBLIC_API_URL: /api
+      API_PROXY_TARGET: http://automation-api:4000
+      API_PROXY_INSECURE_COOKIES: "false"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    cpus: ${AUTOMATION_PANEL_CPUS:-0.50}
+    mem_limit: ${AUTOMATION_PANEL_MEMORY:-512m}
+    networks:
+      - proxy_net
   platform-admin:
     build:
       context: ./srv/apps/platform-admin
@@ -856,6 +932,10 @@ services:
         condition: service_healthy
       automation-api:
         condition: service_healthy
+      automation-customer-panel:
+        condition: service_healthy
+      automation-super-admin-panel:
+        condition: service_healthy
       media-service:
         condition: service_healthy
       postgres:
@@ -874,6 +954,8 @@ services:
       N8N_DOMAIN: ${N8N_DOMAIN:-n8n.openmusk.store}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.openmusk.store}
       API_DOMAIN: ${API_DOMAIN:-api.openmusk.store}
+      CUSTOMER_DOMAIN: ${CUSTOMER_DOMAIN:-app.openmusk.store}
+      SUPER_ADMIN_DOMAIN: ${SUPER_ADMIN_DOMAIN:-saas-admin.openmusk.store}
       REDIS_DOMAIN: ${REDIS_DOMAIN:-redis.openmusk.store}
       MONGO_DOMAIN: ${MONGO_DOMAIN:-mongo.openmusk.store}
       SMOKE_EXTERNAL_STRICT: ${SMOKE_EXTERNAL_STRICT:-false}

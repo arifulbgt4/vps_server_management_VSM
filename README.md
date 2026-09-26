@@ -193,7 +193,7 @@ Do not commit any file from a `secrets/` directory, private key, password, beare
 
 ## n8n Automation SaaS runtime
 
-VSM now hosts the backend runtime from `arifulbgt4/n8n-automation` while Customer Panel and Super Admin can run locally.
+VSM hosts the backend runtime and can serve the Customer Panel and SaaS Super Admin Panel as separate HTTPS services. Local panel development remains supported.
 
 New runtime services: `automation-db-init`, `automation-migrate`, `automation-api`, and `automation-worker`. The existing `n8n-worker` remains the n8n execution worker and is not replaced.
 

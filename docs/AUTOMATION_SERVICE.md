@@ -1,17 +1,13 @@
 # n8n Automation SaaS deployment on VSM
 
-This guide runs PostgreSQL, Redis, `automation-api`, `automation-worker`, n8n, `n8n-worker`, and Media Storage on the VPS while Customer Panel and Super Admin are developed locally.
+This guide runs PostgreSQL, Redis, `automation-api`, `automation-worker`, n8n, `n8n-worker`, Media Storage, Customer Panel, and SaaS Super Admin on the VPS. Local panel development remains supported as an alternative.
 
 ## Architecture
 
 ```text
-Local Mac
-  Customer Panel :3000
-  Super Admin    :3001
-        |
-        | HTTPS
-        v
-api.openmusk.store -> platform-proxy -> automation-api:4000
+Customer Panel   https://app.openmusk.store -> platform-proxy -> automation-customer-panel:3000
+SaaS Super Admin https://saas-admin.openmusk.store -> platform-proxy -> automation-super-admin-panel:3001
+API              https://api.openmusk.store -> platform-proxy -> automation-api:4000
                                       |
                                       +-> PostgreSQL app_db
                                       +-> Redis DB 0
@@ -26,13 +22,15 @@ n8n-worker        -> n8n execution queue
 
 ## 1. DNS
 
-Create this A record before deployment:
+Create these A records before deployment:
 
 ```text
+app.openmusk.store -> YOUR_VPS_IPV4
+saas-admin.openmusk.store -> YOUR_VPS_IPV4
 api.openmusk.store -> YOUR_VPS_IPV4
 ```
 
-If another hostname is used, set `API_DOMAIN` in the VPS `.env`.
+If other hostnames are used, set `CUSTOMER_DOMAIN`, `SUPER_ADMIN_DOMAIN`, and `API_DOMAIN` in the VPS `.env`.
 
 ## 2. Pull the VSM update
 
@@ -54,11 +52,13 @@ Verify at least:
 
 ```dotenv
 API_DOMAIN=api.openmusk.store
+CUSTOMER_DOMAIN=app.openmusk.store
+SUPER_ADMIN_DOMAIN=saas-admin.openmusk.store
 AUTOMATION_REPOSITORY=https://github.com/arifulbgt4/n8n-automation.git
 AUTOMATION_REF=master
 AUTOMATION_QUEUE_PREFIX=n8nauto:production
-AUTOMATION_CUSTOMER_APP_ORIGIN=http://localhost:3000
-AUTOMATION_ADMIN_APP_ORIGIN=http://localhost:3001
+AUTOMATION_CUSTOMER_APP_ORIGIN=https://app.openmusk.store
+AUTOMATION_ADMIN_APP_ORIGIN=https://saas-admin.openmusk.store
 AUTOMATION_N8N_BUNDLE_VERSION=2.0.0
 ```
 
@@ -283,7 +283,7 @@ docker compose restart n8n
 docker compose restart n8n-worker
 ```
 
-## 15. Local frontend configuration
+## 15. Local frontend configuration (optional)
 
 On the development Mac, Customer Panel and Super Admin should proxy local `/api` requests to `https://api.openmusk.store`. This keeps browser authentication same-origin from the local UI perspective and avoids problems with production Secure/SameSite cookies.
 

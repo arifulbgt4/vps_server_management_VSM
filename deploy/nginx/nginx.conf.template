@@ -59,6 +59,52 @@ http {
   server {
     listen 443 ssl;
     http2 on;
+    server_name ${CUSTOMER_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${CUSTOMER_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${CUSTOMER_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    set $customer_panel_upstream http://automation-customer-panel:3000;
+
+    location / {
+      proxy_pass $customer_panel_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto https;
+      proxy_read_timeout 120s;
+      proxy_send_timeout 120s;
+    }
+  }
+
+  server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${SUPER_ADMIN_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${SUPER_ADMIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SUPER_ADMIN_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    set $super_admin_panel_upstream http://automation-super-admin-panel:3001;
+
+    location / {
+      proxy_pass $super_admin_panel_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto https;
+      proxy_read_timeout 120s;
+      proxy_send_timeout 120s;
+    }
+  }
+
+  server {
+    listen 443 ssl;
+    http2 on;
     server_name ${N8N_DOMAIN};
 
     ssl_certificate /etc/letsencrypt/live/${N8N_DOMAIN}/fullchain.pem;
