@@ -61,10 +61,26 @@ AUTOMATION_CUSTOMER_APP_ORIGIN=https://app.openmusk.store
 AUTOMATION_ADMIN_APP_ORIGIN=https://saas-admin.openmusk.store
 AUTOMATION_CUSTOMER_APP_ALLOWED_ORIGINS=https://automation-fwi.vercel.app
 AUTOMATION_ADMIN_APP_ALLOWED_ORIGINS=https://n8n-automation-super-admin.vercel.app
+AUTOMATION_RESEND_API_KEY=
+AUTOMATION_RESEND_API_URL=https://api.resend.com
+AUTOMATION_EMAIL_FROM=no-reply@openmusk.store
 AUTOMATION_N8N_BUNDLE_VERSION=2.0.0
 ```
 
-Do not commit the VPS `.env`.
+`AUTOMATION_RESEND_API_KEY` is passed only to the server-side automation API/worker containers. Use an `EMAIL_FROM` address from a domain verified in Resend. Do not commit the VPS `.env` or place the key in a panel `NEXT_PUBLIC_*` variable.
+
+Resend is preferred when the key is non-empty. The legacy `AUTOMATION_EMAIL_DELIVERY_WEBHOOK_URL` remains a fallback when the key is blank. After changing the key or sender in the VPS `.env`, recreate the two application services so Compose reloads the environment:
+
+```bash
+docker compose up -d --no-deps automation-api automation-worker
+```
+
+Never print the `.env` or container environment while checking this change. A safe presence check is:
+
+```bash
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' automation-api \
+  | awk -F= '$1=="RESEND_API_KEY" {print $1 "=" (length($2) ? "set" : "unset")}'
+```
 
 ## 3. Back up PostgreSQL before the first pgvector build
 

@@ -560,6 +560,8 @@ services:
       CUSTOMER_APP_ALLOWED_ORIGINS: ${AUTOMATION_CUSTOMER_APP_ALLOWED_ORIGINS:-}
       ADMIN_APP_ALLOWED_ORIGINS: ${AUTOMATION_ADMIN_APP_ALLOWED_ORIGINS:-}
       API_PUBLIC_ORIGIN: https://${API_DOMAIN:-api.openmusk.store}
+      RESEND_API_KEY: ${AUTOMATION_RESEND_API_KEY:-}
+      RESEND_API_URL: ${AUTOMATION_RESEND_API_URL:-https://api.resend.com}
       EMAIL_DELIVERY_WEBHOOK_URL: ${AUTOMATION_EMAIL_DELIVERY_WEBHOOK_URL:-}
       EMAIL_FROM: ${AUTOMATION_EMAIL_FROM:-no-reply@openmusk.store}
       MEDIA_BASE_URL: http://media-service:8080
@@ -607,6 +609,10 @@ services:
       NODE_ENV: production
       QUEUE_PREFIX: ${AUTOMATION_QUEUE_PREFIX:-n8nauto:production}
       API_PUBLIC_ORIGIN: http://automation-api:4000
+      RESEND_API_KEY: ${AUTOMATION_RESEND_API_KEY:-}
+      RESEND_API_URL: ${AUTOMATION_RESEND_API_URL:-https://api.resend.com}
+      EMAIL_DELIVERY_WEBHOOK_URL: ${AUTOMATION_EMAIL_DELIVERY_WEBHOOK_URL:-}
+      EMAIL_FROM: ${AUTOMATION_EMAIL_FROM:-no-reply@openmusk.store}
       MEDIA_BASE_URL: http://media-service:8080
       N8N_TURN_WEBHOOK_URL: http://n8n:5678/webhook/saas-turn
       N8N_TRAINING_WEBHOOK_URL: http://n8n:5678/webhook/saas-training
