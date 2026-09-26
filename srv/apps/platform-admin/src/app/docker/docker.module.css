@@ -174,6 +174,97 @@
   font-size: 20px;
 }
 
+.endpointSection {
+  border: 1px solid #202b36;
+  background: #0f161f;
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.sectionHeader h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.sectionHeader p {
+  margin: 5px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.endpointGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.endpointCard {
+  border: 1px solid #263341;
+  background: #111b25;
+  border-radius: 11px;
+  padding: 14px;
+  min-width: 0;
+}
+
+.endpointTopline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.endpointTopline h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.endpointTopline p {
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.endpointLink {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 16px;
+  color: #bfdbfe;
+  text-decoration: none;
+}
+
+.endpointLink:hover {
+  color: #dbeafe;
+  text-decoration: underline;
+}
+
+.endpointLink strong {
+  overflow-wrap: anywhere;
+}
+
+.endpointLink span {
+  flex: none;
+  color: #8ab4ff;
+  font-size: 12px;
+}
+
+.endpointService {
+  display: block;
+  margin-top: 9px;
+  color: #82909e;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .serviceList {
   display: grid;
   gap: 16px;
@@ -461,6 +552,10 @@
   .hostSummary,
   .metricsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .endpointGrid {
+    grid-template-columns: 1fr;
   }
 
   .detailGrid {

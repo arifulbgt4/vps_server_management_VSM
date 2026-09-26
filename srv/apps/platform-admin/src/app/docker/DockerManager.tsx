@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import styles from "./docker.module.css";
 
 type NetworkInfo = {
@@ -63,6 +64,23 @@ type LimitDraft = {
   cpu: string;
   memory: string;
 };
+
+const applicationEndpoints = [
+  {
+    name: "Customer Panel",
+    description: "Tenant workspace",
+    domain: "app.openmusk.store",
+    url: "https://app.openmusk.store",
+    service: "automation-customer-panel",
+  },
+  {
+    name: "Super Admin Panel",
+    description: "Platform operator console",
+    domain: "saas-admin.openmusk.store",
+    url: "https://saas-admin.openmusk.store",
+    service: "automation-super-admin-panel",
+  },
+] as const;
 
 const emptyHost: HostInfo = {
   cpus: 0,
@@ -297,7 +315,7 @@ export default function DockerManager() {
       <section className={styles.shell}>
         <header className={styles.topbar}>
           <div>
-            <a className={styles.back} href="/">← Platform Admin</a>
+            <Link className={styles.back} href="/">← Platform Admin</Link>
             <h1>Docker Services</h1>
             <p>Live host and container metrics, persistent CPU/RAM limits, network details, logs and lifecycle controls.</p>
           </div>
@@ -374,6 +392,37 @@ export default function DockerManager() {
         <section className={styles.hostSummary}>
           <div><span>Metrics refresh</span><strong>10 sec</strong></div>
           <div><span>Managed services</span><strong>{services.length}</strong></div>
+        </section>
+
+        <section className={styles.endpointSection} aria-labelledby="application-endpoints-title">
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2 id="application-endpoints-title">Application endpoints</h2>
+              <p>Public panel URLs mapped to the Docker services managed on this VPS.</p>
+            </div>
+          </div>
+          <div className={styles.endpointGrid}>
+            {applicationEndpoints.map((endpoint) => {
+              const service = services.find((item) => item.name === endpoint.service);
+              const running = service?.state === "running";
+              return (
+                <article className={styles.endpointCard} key={endpoint.service}>
+                  <div className={styles.endpointTopline}>
+                    <div>
+                      <h3>{endpoint.name}</h3>
+                      <p>{endpoint.description}</p>
+                    </div>
+                    <span className={running ? styles.online : styles.offline}>{service ? service.state : "not listed"}</span>
+                  </div>
+                  <a className={styles.endpointLink} href={endpoint.url} target="_blank" rel="noreferrer">
+                    <strong>{endpoint.domain}</strong>
+                    <span>Open panel ↗</span>
+                  </a>
+                  <code className={styles.endpointService}>{endpoint.service}</code>
+                </article>
+              );
+            })}
+          </div>
         </section>
 
         <div className={styles.serviceList}>
