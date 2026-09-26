@@ -13,6 +13,9 @@ RUN git clone --depth 1 --branch "$AUTOMATION_REF" "$AUTOMATION_REPOSITORY" app
 
 WORKDIR /src/app
 RUN npm install --include=dev
+RUN LIGHTNINGCSS_VERSION="$(node -p "require('./${PANEL_WORKSPACE}/node_modules/lightningcss/package.json').version")" \
+  && npm install --no-save --package-lock=false --ignore-scripts --workspace="$PANEL_WORKSPACE" \
+    "lightningcss-linux-x64-gnu@$LIGHTNINGCSS_VERSION"
 ENV NEXT_PUBLIC_API_URL=/api
 RUN npm run build -w "$PANEL_WORKSPACE"
 RUN npm prune --omit=dev
