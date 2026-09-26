@@ -1,10 +1,12 @@
-FROM node:22-alpine AS build
+FROM node:22-bookworm-slim AS build
 
 ARG AUTOMATION_REPOSITORY=https://github.com/arifulbgt4/n8n-automation.git
 ARG AUTOMATION_REF=master
 ARG PANEL_WORKSPACE=customer-panel
 
-RUN apk add --no-cache git
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 RUN git clone --depth 1 --branch "$AUTOMATION_REF" "$AUTOMATION_REPOSITORY" app
@@ -15,9 +17,8 @@ ENV NEXT_PUBLIC_API_URL=/api
 RUN npm run build -w "$PANEL_WORKSPACE"
 RUN npm prune --omit=dev
 
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
-RUN apk add --no-cache ca-certificates
 WORKDIR /app
 
 ARG PANEL_WORKSPACE=customer-panel
