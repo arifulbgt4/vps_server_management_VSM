@@ -72,7 +72,7 @@ AUTOMATION_N8N_BUNDLE_VERSION=2.0.0
 Resend is preferred when the key is non-empty. The legacy `AUTOMATION_EMAIL_DELIVERY_WEBHOOK_URL` remains a fallback when the key is blank. After changing the key or sender in the VPS `.env`, recreate the two application services so Compose reloads the environment:
 
 ```bash
-docker compose up -d --no-deps automation-api automation-worker
+docker compose up -d --no-deps --force-recreate automation-api automation-worker
 ```
 
 Never print the `.env` or container environment while checking this change. A safe presence check is:
