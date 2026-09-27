@@ -30,7 +30,12 @@ const PUBLIC_BASE_URL = String(process.env.MEDIA_PUBLIC_BASE_URL || "").replace(
 const PUBLIC_FILES_ENABLED = String(process.env.MEDIA_PUBLIC_FILES_ENABLED || "true") === "true";
 const MAX_UPLOAD_BYTES = Number(process.env.MEDIA_MAX_UPLOAD_BYTES || 512 * 1024 * 1024);
 const MIN_FREE_BYTES = Number(process.env.MEDIA_MIN_FREE_BYTES || 5 * 1024 * 1024 * 1024);
+const GLOBAL_QUOTA_BYTES = Number(process.env.MEDIA_GLOBAL_QUOTA_BYTES || 0);
 const ALLOW_OTHER_FILES = String(process.env.MEDIA_ALLOW_OTHER_FILES || "false") === "true";
+
+if (!Number.isSafeInteger(GLOBAL_QUOTA_BYTES) || GLOBAL_QUOTA_BYTES < 0) {
+  throw new Error("MEDIA_GLOBAL_QUOTA_BYTES must be a non-negative safe integer");
+}
 
 const ADMIN_TOKEN = readFileSync(ADMIN_TOKEN_FILE, "utf8").trim();
 const DB_PASSWORD = readFileSync(DB_PASSWORD_FILE, "utf8").trim();
@@ -389,6 +394,32 @@ function ensureServerHasSpace(sizeBytes) {
   }
 }
 
+async function globalStorageMetrics(client = pool) {
+  const result = await client.query("SELECT COALESCE(sum(used_bytes),0)::bigint AS used_bytes FROM media_users");
+  const used = Number(result.rows[0]?.used_bytes || 0);
+  return {
+    quota_bytes: GLOBAL_QUOTA_BYTES || null,
+    used_bytes: used,
+    available_bytes: GLOBAL_QUOTA_BYTES ? Math.max(0, GLOBAL_QUOTA_BYTES - used) : null,
+  };
+}
+
+async function ensureGlobalQuota(client, sizeBytes) {
+  if (!GLOBAL_QUOTA_BYTES) return;
+  // Serialize uploads across users so two concurrent requests cannot both fit
+  // under the same service-wide quota before either commits.
+  await client.query("SELECT pg_advisory_xact_lock(1204001, 1)");
+  const metrics = await globalStorageMetrics(client);
+  if (sizeBytes > metrics.available_bytes) {
+    const error = new Error("Global media storage quota exceeded");
+    error.code = "global_storage_quota_exceeded";
+    error.quota_bytes = metrics.quota_bytes;
+    error.used_bytes = metrics.used_bytes;
+    error.available_bytes = metrics.available_bytes;
+    throw error;
+  }
+}
+
 async function runMigrations() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS media_users (
@@ -526,6 +557,7 @@ async function uploadForUser(userId, req) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await ensureGlobalQuota(client, upload.size_bytes);
       const locked = await client.query(
         "SELECT * FROM media_users WHERE id = $1 FOR UPDATE",
         [userId],
@@ -728,14 +760,16 @@ function sendFile(req, res, row, forceAttachment = false) {
 }
 
 async function adminOverview() {
-  const [users, files] = await Promise.all([
+  const [users, files, globalStorage] = await Promise.all([
     pool.query("SELECT count(*)::bigint AS count, COALESCE(sum(used_bytes),0)::bigint AS bytes FROM media_users"),
     pool.query("SELECT count(*)::bigint AS count, COALESCE(sum(size_bytes),0)::bigint AS bytes FROM media_files"),
+    globalStorageMetrics(),
   ]);
   return {
     users: Number(users.rows[0]?.count || 0),
     files: Number(files.rows[0]?.count || 0),
     stored_bytes: Number(files.rows[0]?.bytes || 0),
+    global_storage: globalStorage,
     filesystem: storageMetrics(),
     max_upload_bytes: MAX_UPLOAD_BYTES,
     public_files_enabled: PUBLIC_FILES_ENABLED,
@@ -824,7 +858,11 @@ async function route(req, res) {
           GROUP BY u.id`,
         [user.id],
       );
-      return json(res, 200, { storage: serializeUser(refreshed.rows[0]), server: storageMetrics() });
+      return json(res, 200, {
+        storage: serializeUser(refreshed.rows[0]),
+        server: storageMetrics(),
+        global_storage: await globalStorageMetrics(),
+      });
     }
 
     if (req.method === "POST" && pathname === "/api/v1/files") {
@@ -873,6 +911,7 @@ const server = http.createServer(async (req, res) => {
     const code = error?.code || "request_failed";
     const status =
       code === "storage_quota_exceeded" ? 413
+      : code === "global_storage_quota_exceeded" ? 413
       : code === "server_storage_full" ? 507
       : /not found/i.test(error?.message || "") ? 404
       : /invalid|must|quota|allowed|signature|required|exceeds/i.test(error?.message || "") ? 400

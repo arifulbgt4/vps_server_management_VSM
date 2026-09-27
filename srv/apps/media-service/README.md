@@ -430,7 +430,7 @@ Common binary formats receive signature checks.
 Public serving requires visibility=public.
 Private binary responses use no-store.
 X-Content-Type-Options: nosniff is set on file responses.
-The final 5 GiB of host storage is protected by default.
+The final 5 GiB of host storage is protected by default. `MEDIA_GLOBAL_QUOTA_BYTES` can also cap the sum of stored bytes across all media users. In the VSM root Compose deployment it defaults to 53,687,091,200 bytes (50 GiB). The standalone Media Service Compose deployment leaves this global cap disabled (`0`) unless configured. The user storage response and admin overview include `global_storage` with the configured cap and current usage. Uploads that would exceed the cap return HTTP 413 with `global_storage_quota_exceeded`; existing files are never deleted when a cap is lowered. Per-user quota and the host free-space reserve still apply.
 Database access stays on postgres_net.
 Same-VPS application access stays on media_net.
 Secrets are never committed to Git.

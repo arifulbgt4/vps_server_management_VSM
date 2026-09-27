@@ -54,6 +54,7 @@ mkdir(ROOT, 0o755);
 mkdir(SECRETS);
 mkdir(MASTER);
 mkdir(BOOTSTRAP);
+mkdir(join(SECRETS, "automation", "media"), 0o700, uid.node, uid.node);
 
 for (const path of [
   join(ROOT, "postgres", "data"),

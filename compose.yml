@@ -485,6 +485,7 @@ services:
       MEDIA_PUBLIC_FILES_ENABLED: "true"
       MEDIA_MAX_UPLOAD_BYTES: ${MEDIA_MAX_UPLOAD_BYTES:-536870912}
       MEDIA_MIN_FREE_BYTES: ${MEDIA_MIN_FREE_BYTES:-5368709120}
+      MEDIA_GLOBAL_QUOTA_BYTES: ${MEDIA_GLOBAL_QUOTA_BYTES:-53687091200}
       MEDIA_ALLOW_OTHER_FILES: "false"
     volumes:
       - /srv/vsm/media/storage:/storage
@@ -504,6 +505,29 @@ services:
         aliases:
           - media-service
       proxy_net:
+
+  automation-media-init:
+    image: vsm-toolbox:local
+    container_name: automation-media-init
+    restart: "no"
+    user: "1000:1000"
+    depends_on:
+      vsm-init:
+        condition: service_completed_successfully
+      media-service:
+        condition: service_healthy
+    # flock is released by the kernel if this one-shot process or host stops.
+    # The lock file can remain on disk without blocking the next run.
+    command: ["sh", "-c", "umask 077; exec flock -x /run/media-credentials/media_api_key.lock node /opt/vsm/provision-automation-media.mjs"]
+    environment:
+      MEDIA_BASE_URL: http://media-service:8080
+      MEDIA_ADMIN_TOKEN_FILE: /run/secrets/media_admin_token
+      MEDIA_API_KEY_FILE: /run/media-credentials/media_api_key
+    volumes:
+      - /srv/vsm/secrets/media/admin_token:/run/secrets/media_admin_token:ro
+      - /srv/vsm/secrets/automation/media:/run/media-credentials
+    networks:
+      - media_net
 
   automation-db-init:
     image: vsm-postgres-pgvector:local
@@ -549,6 +573,8 @@ services:
         condition: service_healthy
       media-service:
         condition: service_healthy
+      automation-media-init:
+        condition: service_completed_successfully
     command: ["api"]
     environment:
       NODE_ENV: production
@@ -582,7 +608,12 @@ services:
       - /srv/vsm/secrets/automation/redis_password:/run/secrets/redis_password:ro
       - /srv/vsm/secrets/automation/app_encryption_key:/run/secrets/app_encryption_key:ro
       - /srv/vsm/secrets/automation/internal_service_auth_secret:/run/secrets/internal_service_auth_secret:ro
-      - /srv/vsm/secrets/media/admin_token:/run/secrets/media_admin_token:ro
+      - type: bind
+        source: /srv/vsm/secrets/automation/media/media_api_key
+        target: /run/secrets/media_api_key
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -626,7 +657,12 @@ services:
       - /srv/vsm/secrets/automation/redis_password:/run/secrets/redis_password:ro
       - /srv/vsm/secrets/automation/app_encryption_key:/run/secrets/app_encryption_key:ro
       - /srv/vsm/secrets/automation/internal_service_auth_secret:/run/secrets/internal_service_auth_secret:ro
-      - /srv/vsm/secrets/media/admin_token:/run/secrets/media_admin_token:ro
+      - type: bind
+        source: /srv/vsm/secrets/automation/media/media_api_key
+        target: /run/secrets/media_api_key
+        read_only: true
+        bind:
+          create_host_path: false
     cpus: ${AUTOMATION_WORKER_CPUS:-1.0}
     mem_limit: ${AUTOMATION_WORKER_MEMORY:-1024m}
     networks:

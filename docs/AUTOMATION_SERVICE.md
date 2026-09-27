@@ -65,6 +65,7 @@ AUTOMATION_RESEND_API_KEY=
 AUTOMATION_RESEND_API_URL=https://api.resend.com
 AUTOMATION_EMAIL_FROM=no-reply@openmusk.store
 AUTOMATION_N8N_BUNDLE_VERSION=2.0.0
+MEDIA_GLOBAL_QUOTA_BYTES=53687091200
 ```
 
 `AUTOMATION_RESEND_API_KEY` is passed only to the server-side automation API/worker containers. Use an `EMAIL_FROM` address from a domain verified in Resend. Do not commit the VPS `.env` or place the key in a panel `NEXT_PUBLIC_*` variable.
@@ -114,9 +115,26 @@ vsm-init
   -> automation-migrate
   -> automation-api
   -> automation-worker
+
+media-service
+  -> automation-media-init
+  -> automation-api
 ```
 
-`automation-db-init` and `automation-migrate` are one-shot services. `Exited (0)` is the expected healthy state for them.
+`automation-db-init`, `automation-migrate`, and `automation-media-init` are one-shot services. `Exited (0)` is the expected healthy state for them.
+
+`automation-media-init` creates one Media Service user named `n8n-automation-shared` and writes its API key once to `/srv/vsm/secrets/automation/media/media_api_key` with mode `0600`. Subsequent runs validate that key and leave it unchanged. The automation API and worker receive only this user key; the Media Service admin token stays with the one-shot provisioner and Platform Admin. The total media usage limit applies across every Media Service user. Existing files are left in place, and if current usage already exceeds the configured cap, new uploads are rejected until usage falls below it or the cap is raised.
+
+If provisioning reports that the account exists but the local key file is missing, verify that the file has not been moved to another backup location. To explicitly rotate only the `n8n-automation-shared` account and write a new private key file, run:
+
+```bash
+docker compose run --rm -e MEDIA_RECOVER_EXISTING=1 automation-media-init
+docker compose up -d automation-api automation-worker
+```
+
+The recovery command never prints the key. Preserve the existing media database and `/srv/vsm/media/storage`. If the key file exists but is invalid, move that exact file to a protected backup location before running recovery so the old key is not silently overwritten.
+
+The provisioner uses a kernel-managed lock on `media_api_key.lock` to prevent concurrent setup or recovery. The lock is released automatically if the process or host stops. The file can remain on disk and does not need to be removed before retrying.
 
 ## 5. Inspect runtime status
 
@@ -124,6 +142,7 @@ vsm-init
 docker compose ps -a
 docker compose logs --tail=100 automation-db-init
 docker compose logs --tail=100 automation-migrate
+docker compose logs --tail=100 automation-media-init
 docker compose logs --tail=100 automation-api
 docker compose logs --tail=100 automation-worker
 docker compose logs --tail=100 n8n

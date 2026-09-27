@@ -5,6 +5,7 @@ RUN apk add --no-cache \
     bind-tools \
     ca-certificates \
     curl \
+    flock \
     iproute2 \
     iptables \
     netcat-openbsd \
@@ -13,6 +14,7 @@ RUN apk add --no-cache \
 WORKDIR /opt/vsm
 
 COPY deploy/scripts/init-secrets.mjs /opt/vsm/init-secrets.mjs
+COPY deploy/scripts/provision-automation-media.mjs /opt/vsm/provision-automation-media.mjs
 COPY deploy/scripts/smoke-test.mjs /opt/vsm/smoke-test.mjs
 COPY deploy/firewall/loop.sh /opt/vsm/firewall-loop.sh
 

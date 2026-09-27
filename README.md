@@ -175,7 +175,7 @@ This allows workflow nodes to reach database services over private Docker networ
 
 ## Media Storage
 
-The service stores physical files under `/srv/apps/media-service/storage` and ownership/quota/file metadata in its dedicated PostgreSQL database. Platform Admin reaches the private media admin API through `media_net`; n8n reaches media binaries directly through `http://media-service:8080`.
+The service stores physical files under `/srv/vsm/media/storage` and ownership/quota/file metadata in its dedicated PostgreSQL database. Platform Admin reaches the private media admin API through `media_net`; n8n reaches media binaries directly through `http://media-service:8080`. The automation API and worker use one shared Media Service user key. The root deployment caps total media usage across all users at 50 GiB by default, configurable with `MEDIA_GLOBAL_QUOTA_BYTES`.
 
 ## Load balancing
 
@@ -195,7 +195,7 @@ Do not commit any file from a `secrets/` directory, private key, password, beare
 
 VSM hosts the backend runtime and can serve the Customer Panel and SaaS Super Admin Panel as separate HTTPS services. Local panel development remains supported.
 
-New runtime services: `automation-db-init`, `automation-migrate`, `automation-api`, and `automation-worker`. The existing `n8n-worker` remains the n8n execution worker and is not replaced.
+New runtime services: `automation-db-init`, `automation-migrate`, `automation-media-init`, `automation-api`, and `automation-worker`. The existing `n8n-worker` remains the n8n execution worker and is not replaced.
 
 PostgreSQL stays on the Alpine PostgreSQL 17 base and gains pgvector capability. The `vector` extension is enabled only in the SaaS `app_db`, so other VSM databases continue to behave as normal PostgreSQL databases.
 

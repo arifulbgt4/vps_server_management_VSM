@@ -20,13 +20,14 @@ export REDIS_URL="redis://automation_app:${REDIS_PASSWORD}@redis:6379/0"
 export APP_ENCRYPTION_KEY="$APP_KEY"
 export INTERNAL_SERVICE_AUTH_SECRET="$INTERNAL_SECRET"
 
-if [ -r /run/secrets/media_admin_token ]; then
-  MEDIA_ADMIN_TOKEN="$(cat /run/secrets/media_admin_token)"
-  [ -n "$MEDIA_ADMIN_TOKEN" ] && export MEDIA_ADMIN_TOKEN
-fi
+case "${1:-api}" in
+  api|worker)
+    MEDIA_KEY="$(read_required /run/secrets/media_api_key "Automation media API key")"
+    export MEDIA_API_KEY="$MEDIA_KEY"
+    unset MEDIA_KEY
+    ;;
+esac
 
-# Clear only the temporary source variables. MEDIA_ADMIN_TOKEN must remain
-# exported so the API/worker process can provision tenant-scoped media accounts.
 unset DB_PASSWORD REDIS_PASSWORD APP_KEY INTERNAL_SECRET
 
 case "${1:-api}" in

@@ -6,4 +6,4 @@ One image is reused for three roles: `migrate`, `api`, and `worker`.
 
 `automation-worker` is intentionally separate from VSM's `n8n-worker`. The n8n worker consumes n8n's execution queue; `automation-worker` consumes the SaaS BullMQ queues.
 
-Runtime secrets are mounted from `/srv/vsm/secrets/automation` and converted into `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, and `INTERNAL_SERVICE_AUTH_SECRET` by the entrypoint.
+Runtime secrets are mounted from `/srv/vsm/secrets/automation` and converted into `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, and `INTERNAL_SERVICE_AUTH_SECRET` by the entrypoint. The API and worker also load one shared Media Service user key from `/srv/vsm/secrets/automation/media/media_api_key` as `MEDIA_API_KEY`. The database migration does not need that key. The automation containers do not receive the Media Service admin token.
