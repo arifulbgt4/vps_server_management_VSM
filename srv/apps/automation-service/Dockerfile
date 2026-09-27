@@ -6,7 +6,10 @@ ARG AUTOMATION_REF=master
 RUN apk add --no-cache git
 
 WORKDIR /src
-RUN git clone --depth 1 --branch "$AUTOMATION_REF" "$AUTOMATION_REPOSITORY" app
+RUN git clone --depth 1 "$AUTOMATION_REPOSITORY" app \
+ && cd app \
+ && git fetch --depth 1 origin "$AUTOMATION_REF" \
+ && git checkout --detach FETCH_HEAD
 
 WORKDIR /src/app
 RUN npm install --include=dev
@@ -17,6 +20,9 @@ RUN npm prune --omit=dev \
  && rm -rf .git customer-panel super-admin-panel
 
 FROM node:22-alpine
+
+ARG AUTOMATION_REF=master
+LABEL org.opencontainers.image.revision="$AUTOMATION_REF"
 
 RUN apk add --no-cache ca-certificates
 WORKDIR /app

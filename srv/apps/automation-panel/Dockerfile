@@ -9,7 +9,10 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-RUN git clone --depth 1 --branch "$AUTOMATION_REF" "$AUTOMATION_REPOSITORY" app
+RUN git clone --depth 1 "$AUTOMATION_REPOSITORY" app \
+ && cd app \
+ && git fetch --depth 1 origin "$AUTOMATION_REF" \
+ && git checkout --detach FETCH_HEAD
 
 WORKDIR /src/app
 RUN npm install --include=dev
@@ -21,6 +24,9 @@ RUN npm run build -w "$PANEL_WORKSPACE"
 RUN npm prune --omit=dev
 
 FROM node:22-bookworm-slim
+
+ARG AUTOMATION_REF=master
+LABEL org.opencontainers.image.revision="$AUTOMATION_REF"
 
 WORKDIR /app
 

@@ -287,7 +287,7 @@ docker compose run --rm --no-deps \
 
 ## 12. Update the n8n-automation backend later
 
-`AUTOMATION_REF=master` is a moving Git ref, so use a no-cache build to guarantee the newest code is cloned:
+`AUTOMATION_REF=master` is a moving Git ref, so use a no-cache build to guarantee the newest code is cloned. For coordinated application/VSM changes, set `AUTOMATION_REF` to the exact published application commit SHA during both build and rollout; images record that revision in `org.opencontainers.image.revision`:
 
 ```bash
 cd /path/to/vps_server_management_VSM
