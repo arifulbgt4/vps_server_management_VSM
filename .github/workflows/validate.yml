@@ -37,6 +37,8 @@ jobs:
         run: |
           node --check deploy/scripts/init-secrets.mjs
           node --check deploy/scripts/smoke-test.mjs
+          node --check deploy/scripts/auth-smoke.mjs
+          node --test deploy/scripts/auth-smoke.test.mjs
 
       - name: Verify automation services are resolved
         run: |
