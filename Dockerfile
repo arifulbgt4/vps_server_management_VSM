@@ -16,6 +16,7 @@ WORKDIR /opt/vsm
 COPY deploy/scripts/init-secrets.mjs /opt/vsm/init-secrets.mjs
 COPY deploy/scripts/provision-automation-media.mjs /opt/vsm/provision-automation-media.mjs
 COPY deploy/scripts/smoke-test.mjs /opt/vsm/smoke-test.mjs
+COPY deploy/scripts/auth-smoke.mjs /opt/vsm/auth-smoke.mjs
 COPY deploy/firewall/loop.sh /opt/vsm/firewall-loop.sh
 
 CMD ["sh", "-c", "sleep infinity"]

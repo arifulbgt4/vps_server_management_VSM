@@ -1,5 +1,6 @@
 import net from "node:net";
 import tls from "node:tls";
+import { checkAuthPreflight, checkInvalidCustomerSignin } from "./auth-smoke.mjs";
 
 const strictExternal = (process.env.SMOKE_EXTERNAL_STRICT || "false") === "true";
 
@@ -98,6 +99,32 @@ for (const url of [
     failed = true;
     console.error(`FAIL http ${url}: ${error.message}`);
   }
+}
+
+const customerOrigin = `https://${process.env.CUSTOMER_DOMAIN || "app.openmusk.store"}`;
+const superAdminOrigin = `https://${process.env.SUPER_ADMIN_DOMAIN || "saas-admin.openmusk.store"}`;
+const customerPanel = "http://automation-customer-panel:3000";
+const superAdminPanel = "http://automation-super-admin-panel:3001";
+
+for (const [name, panelUrl, origin] of [
+  ["customer", customerPanel, customerOrigin],
+  ["super-admin", superAdminPanel, superAdminOrigin],
+]) {
+  try {
+    await checkAuthPreflight(name, panelUrl, origin);
+    console.log(`PASS auth preflight ${name} ${origin}`);
+  } catch (error) {
+    failed = true;
+    console.error(`FAIL auth preflight ${name}: ${error.message}`);
+  }
+}
+
+try {
+  await checkInvalidCustomerSignin(customerPanel, customerOrigin);
+  console.log("PASS auth customer invalid sign-in (401 INVALID_CREDENTIALS)");
+} catch (error) {
+  failed = true;
+  console.error(`FAIL auth customer invalid sign-in: ${error.message}`);
 }
 
 const tlsChecks = [

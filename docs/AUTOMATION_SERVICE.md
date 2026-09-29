@@ -311,6 +311,13 @@ docker compose ps -a
 docker compose logs --tail=100 vsm-smoke
 ```
 
+The smoke now sends public-origin auth preflights through both panel `/api` proxies and a synthetic invalid customer sign-in. It requires the latter to return `401 INVALID_CREDENTIALS` with the customer Origin allowed. These checks fail the smoke even when `SMOKE_EXTERNAL_STRICT=false`, so a working homepage cannot hide an API Origin failure. No real account or password is used; the smoke does not prove successful account login or password-reset email delivery. After changing only this smoke script, rebuild the `vsm-toolbox:local` image and run it against the live services:
+
+```bash
+docker compose build vsm-init
+docker compose run --rm --no-deps vsm-smoke
+```
+
 ## 14. Restart individual services
 
 ```bash
